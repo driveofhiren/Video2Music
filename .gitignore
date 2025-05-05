@@ -1,0 +1,63 @@
+# === Python Cache & Envs ===
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+env/
+.venv/
+venv/
+
+# === IDE / Editor ===
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# === Logs & System Files ===
+*.log
+*.DS_Store
+Thumbs.db
+
+# === Model Weights / Checkpoints ===
+*.pt
+*.pth
+*.ckpt
+*.tar
+*.t7
+
+# === Temporary / Generated Files ===
+*.tmp
+*.bak
+*.swp
+*.~*
+*.mp4
+*.avi
+
+# === Audio Assets (large or generated) ===
+back/assets/*.wav
+back/assets/*.mp3
+back/assets/*.flac
+
+# === Frontend ===
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.development
+frontend/.env.production
+
+# === Output or Temp Directories ===
+outputs/
+frames/
+temp/
+recordings/
+results/
+back/video2music
+frontend/node_modules
+
+
+# === Secret or API Keys ===
+.env
+.env.*
+*.key
+*.pem
+*.token
