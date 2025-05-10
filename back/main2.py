@@ -83,10 +83,44 @@ def detect_motion(current_gray, prev_gray):
     return motion_score
 
 def detect_objects(yolo_model, frame):
+    """Enhanced to return objects with positions"""
     results = yolo_model(frame, verbose=False)[0]
     names = yolo_model.names
-    detected = [names[int(cls)] for cls in results.boxes.cls]
-    return list(set(detected))
+    detected_objects = []
+    
+    for box, cls, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
+        obj_name = names[int(cls)]
+        x1, y1, x2, y2 = map(int, box[:4])
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        
+        detected_objects.append({
+            'name': obj_name,
+            'position': (center_x, center_y),
+            'bbox': (x1, y1, x2, y2),
+            'confidence': float(conf)
+        })
+    
+    return detected_objects
+
+def draw_object_positions(frame, objects):
+    """Draw bounding boxes and center points"""
+    for obj in objects:
+        x1, y1, x2, y2 = obj['bbox']
+        center_x, center_y = obj['position']
+        
+        # Draw bounding box
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        # Draw center point
+        cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+        
+        # Display position info
+        label = f"{obj['name']} ({center_x},{center_y})"
+        cv2.putText(frame, label, (x1, y1 - 10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+    
+    return frame
 
 # ---------- Drawing ----------
 
@@ -112,7 +146,7 @@ def main():
 
     print("Press 'q' to quit.")
     while True:
-        ret, frame = cap.read()
+        ret, frame = cap.read() 
         if not ret:
             break
 
@@ -135,12 +169,16 @@ def main():
         prev_gray = gray
         objects = detect_objects(yolo_model, frame_resized)
 
+        # --- Draw object positions ---
+        frame_with_positions = draw_object_positions(frame_resized.copy(), objects)
+
         # --- Combine All Info ---
+        object_names = ', '.join([obj['name'] for obj in objects]) if objects else 'None'
         info = [
             f"Scene 1: {top_scenes[0][0]} ({top_scenes[0][1]*100:.1f}%)",
             f"Scene 2: {top_scenes[1][0]} ({top_scenes[1][1]*100:.1f}%)",
             f"Scene 3: {top_scenes[2][0]} ({top_scenes[2][1]*100:.1f}%)",
-            f"Objects: {', '.join(objects) if objects else 'None'}",
+            f"Objects: {object_names}",
             f"Lighting: {brightness}",
             f"Weather: {weather}",
             f"Time: {time_of_day}",
@@ -148,8 +186,8 @@ def main():
             f"Colors: {' '.join(colors)}"
         ]
 
-        draw_overlay(frame_resized, info)
-        cv2.imshow("Live Scene + Object Analyzer", frame_resized)
+        draw_overlay(frame_with_positions, info)
+        cv2.imshow("Live Scene + Object Analyzer", frame_with_positions)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
