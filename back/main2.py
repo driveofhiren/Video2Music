@@ -140,7 +140,7 @@ def main():
 
     classes = load_categories()
     places_model = load_places_model()
-    yolo_model = YOLO('yolov8n.pt')
+    yolo_model = YOLO('yolov8n.pt').cuda()  
     cap = cv2.VideoCapture('http://192.168.2.106:8080/video')
     prev_gray = None
 
