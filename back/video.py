@@ -4,14 +4,12 @@ import torch.nn.functional as F
 import cv2
 import numpy as np
 import os
-import time
 from datetime import datetime
 from torchvision import transforms
 from sklearn.cluster import KMeans
 from ultralytics import YOLO
 
-# ---------- Setup and Loading ----------
-
+# ---------- Category Loading ----------
 def load_categories(filename='categories_places365.txt'):
     with open(filename) as f:
         return [line.strip().split(' ')[0][3:] for line in f if line.strip()]
@@ -34,8 +32,7 @@ def preprocess_image(img):
     ])
     return preprocess(img).unsqueeze(0)
 
-# ---------- Utility Functions ----------
-
+# ---------- Contextual Analysis ----------
 def get_brightness(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     brightness = np.mean(hsv[:, :, 2])
@@ -79,50 +76,33 @@ def detect_motion(current_gray, prev_gray):
     if prev_gray is None:
         return 0
     diff = cv2.absdiff(current_gray, prev_gray)
-    motion_score = np.mean(diff)
-    return motion_score
+    return np.mean(diff)
 
 def detect_objects(yolo_model, frame):
-    """Enhanced to return objects with positions"""
     results = yolo_model(frame, verbose=False)[0]
     names = yolo_model.names
     detected_objects = []
-    
     for box, cls, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
-        obj_name = names[int(cls)]
         x1, y1, x2, y2 = map(int, box[:4])
-        center_x = (x1 + x2) // 2
-        center_y = (y1 + y2) // 2
-        
         detected_objects.append({
-            'name': obj_name,
-            'position': (center_x, center_y),
+            'name': names[int(cls)],
+            'position': ((x1 + x2) // 2, (y1 + y2) // 2),
             'bbox': (x1, y1, x2, y2),
             'confidence': float(conf)
         })
-    
     return detected_objects
 
+# ---------- Drawing ----------
 def draw_object_positions(frame, objects):
-    """Draw bounding boxes and center points"""
     for obj in objects:
         x1, y1, x2, y2 = obj['bbox']
         center_x, center_y = obj['position']
-        
-        # Draw bounding box
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        
-        # Draw center point
         cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
-        
-        # Display position info
         label = f"{obj['name']} ({center_x},{center_y})"
         cv2.putText(frame, label, (x1, y1 - 10), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    
     return frame
-
-# ---------- Drawing ----------
 
 def draw_overlay(frame, lines):
     y = 30
@@ -132,7 +112,6 @@ def draw_overlay(frame, lines):
     return frame
 
 # ---------- Main ----------
-
 def main():
     if not os.path.exists('resnet18_places365.pth.tar') or not os.path.exists('categories_places365.txt'):
         print("Missing model or categories file.")
@@ -140,39 +119,37 @@ def main():
 
     classes = load_categories()
     places_model = load_places_model()
-    yolo_model = YOLO('yolov8n.pt').cuda()  
-    cap = cv2.VideoCapture('http://192.168.2.106:8080/video')
+    yolo_model = YOLO('yolov8n.pt')
+    cap = cv2.VideoCapture('http://192.168.2.106:8080/video')  # Your webcam or IP camera stream
+
     prev_gray = None
 
     print("Press 'q' to quit.")
     while True:
-        ret, frame = cap.read() 
+        ret, frame = cap.read()
         if not ret:
             break
 
         frame_resized = cv2.resize(frame, (640, 480))
         gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
 
-        # --- Places365 Scene Classification ---
+        # Scene classification
         input_tensor = preprocess_image(frame_resized)
         with torch.no_grad():
             probs = F.softmax(places_model(input_tensor), 1)[0]
         top_probs, top_idxs = torch.topk(probs, 3)
         top_scenes = [(classes[i], float(p)) for i, p in zip(top_idxs, top_probs)]
 
-        # --- Other Analyses ---
         brightness = get_brightness(frame_resized)
-        colors = get_dominant_colors(frame_resized)
         weather = simulate_weather(frame_resized)
         time_of_day = get_time_of_day()
         motion = detect_motion(gray, prev_gray)
         prev_gray = gray
         objects = detect_objects(yolo_model, frame_resized)
+        colors = get_dominant_colors(frame_resized)
 
-        # --- Draw object positions ---
         frame_with_positions = draw_object_positions(frame_resized.copy(), objects)
 
-        # --- Combine All Info ---
         object_names = ', '.join([obj['name'] for obj in objects]) if objects else 'None'
         info = [
             f"Scene 1: {top_scenes[0][0]} ({top_scenes[0][1]*100:.1f}%)",
@@ -187,7 +164,7 @@ def main():
         ]
 
         draw_overlay(frame_with_positions, info)
-        cv2.imshow("Live Scene + Object Analyzer", frame_with_positions)
+        cv2.imshow("Live Analyzer", frame_with_positions)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -197,7 +174,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-    # ---------- Drawing ----------

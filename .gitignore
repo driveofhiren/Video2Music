@@ -6,6 +6,8 @@ __pycache__/
 env/
 .venv/
 venv/
+video2music/
+cache/
 
 # === IDE / Editor ===
 .vscode/
@@ -32,6 +34,12 @@ Thumbs.db
 *.~*
 *.mp4
 *.avi
+
+
+.cache/
+*.log
+*.tmp
+*.bak
 
 # === Audio Assets (large or generated) ===
 back/assets/*.wav
