@@ -10,12 +10,45 @@ from datetime import datetime
 from torchvision import transforms
 from sklearn.cluster import KMeans
 from ultralytics import YOLO
+from sentence_transformers import SentenceTransformer, util
 
 import pyaudio
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
+
+model_st = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Lyria RealTime genre and mood lists (sample, expand as needed)
+GENRES = [
+    "Acid Jazz", "Afrobeat", "Alternative Country", "Baroque", "Bengal Baul",
+    "Bhangra", "Bluegrass", "Blues Rock", "Bossa Nova", "Breakbeat",
+    "Celtic Folk", "Chillout", "Chiptune", "Classic Rock", "Contemporary R&B",
+    "Cumbia", "Deep House", "Disco Funk", "Drum & Bass", "Dubstep",
+    "EDM", "Electro Swing", "Funk Metal", "G-funk", "Garage Rock",
+    "Glitch Hop", "Grime", "Hyperpop", "Indian Classical", "Indie Electronic",
+    "Indie Folk", "Indie Pop", "Irish Folk", "Jam Band", "Jamaican Dub",
+    "Jazz Fusion", "Latin Jazz", "Lo-Fi Hip Hop", "Marching Band", "Merengue",
+    "New Jack Swing", "Minimal Techno", "Moombahton", "Neo-Soul", "Orchestral Score",
+    "Piano Ballad", "Polka", "Post-Punk", "Psytrance", "R&B",
+    "Reggae", "Reggaeton", "Renaissance Music", "Salsa", "Shoegaze",
+    "Ska", "Surf Rock", "Synthpop", "Techno", "Trance",
+    "Trap Beat", "Trip Hop", "Vaporwave", "Witch house"
+]
+
+MOODS = [
+    "Acoustic Instruments", "Ambient", "Bright Tones", "Chill", "Crunchy Distortion",
+    "Danceable", "Dreamy", "Echo", "Emotional", "Ethereal Ambience",
+    "Experimental", "Fat Beats", "Funky", "Glitchy Effects", "Huge Drop",
+    "Live Performance", "Lo-fi", "Ominous Drone", "Psychedelic", "Rich Orchestration",
+    "Saturated Tones", "Subdued Melody", "Sustained Chords", "Swirling Phasers",
+    "Tight Groove", "Unsettling", "Upbeat", "Virtuoso", "Weird Noises"
+]
+
+# Precompute embeddings for genres and moods (run once)
+genre_embs = model_st.encode(GENRES, convert_to_tensor=True)
+mood_embs = model_st.encode(MOODS, convert_to_tensor=True)
 # ---------- Video Analysis Functions ----------
 
 def load_categories(filename='categories_places365.txt'):
@@ -120,175 +153,81 @@ def detect_objects(yolo_model, frame):
     return detected_objects
 
 # ---------- Music Prompt Mapping Functions ----------
-
 def map_to_music_prompt(top_scenes, objects, brightness, weather, time_of_day, motion, colors):
-    # Initialize components
     instruments = []
-    genres = []
-    moods = []
+    prompts = []
     config_updates = {}
-    
-    # Scene analysis mapping
-    scene_weights = [s[1] for s in top_scenes]
-    primary_scene = top_scenes[0][0].lower()
-    secondary_scene = top_scenes[1][0].lower() if scene_weights[1] > 0.2 else None
-    
-    # Scene mappings
-    scene_mappings = {
-        'beach': ('Steel Drum', 'Reggae', 'Chill'),
-        'forest': ('Acoustic Guitar', 'Folk', 'Ethereal Ambience'),
-        'city': ('Precision Bass', 'Synthpop', 'Upbeat'),
-        'office': ('Rhodes Piano', 'Lo-Fi Hip Hop', 'Subdued Melody'),
-        'mountain': ('Harp', 'Orchestral Score', 'Emotional'),
-        'street': ('Trumpet', 'Jazz Fusion', 'Live Performance'),
-        'kitchen': ('Marimba', 'Bossa Nova', 'Light'),
-        'bedroom': ('Smooth Pianos', 'Ambient', 'Dreamy'),
-        'restaurant': ('Vibraphone', 'Jazz', 'Sophisticated'),
-        'park': ('Clarinet', 'Classical', 'Peaceful')
-    }
-    
-    # Find best scene match
-    matched_scene = None
-    for scene_key in scene_mappings:
-        if scene_key in primary_scene:
-            matched_scene = scene_key
-            break
-    
-    if matched_scene:
-        instruments.append(scene_mappings[matched_scene][0])
-        genres.append(scene_mappings[matched_scene][1])
-        moods.append(scene_mappings[matched_scene][2])
-    
-    # Object mappings
+
+    # --- 1. Use sentence-transformers for genre + mood ---
+    scene_text = ', '.join([s[0].lower() for s in top_scenes])
+    scene_emb = model_st.encode(scene_text, convert_to_tensor=True)
+    genre_scores = util.cos_sim(scene_emb, genre_embs)
+    mood_scores = util.cos_sim(scene_emb, mood_embs)
+    best_genre = GENRES[genre_scores.argmax()]
+    best_mood = MOODS[mood_scores.argmax()]
+
+    prompts.append(types.WeightedPrompt(text=f"{best_genre} genre", weight=1.0))
+    prompts.append(types.WeightedPrompt(text=best_mood, weight=0.7))
+
+    # --- 2. Add object-derived instruments (if you want to keep that) ---
     object_mappings = {
-        'person': ('Vocal Samples', 0.3),
-        'car': ('Dirty Synths', 0.4),
-        'tree': ('Wind Chimes', 0.2),
-        'dog': ('Whistles', 0.1),
-        'cat': ('Purring Sounds', 0.1),
-        'computer': ('Chiptune', 0.5),
-        'phone': ('Electronic Beeps', 0.3),
-        'book': ('Page Turning Sounds', 0.2),
-        'chair': ('Wooden Percussion', 0.2),
-        'cup': ('Glass Harmonica', 0.1)
+        'car': 'Dirty Synths',
+        'tree': 'Wind Chimes',
+        'dog': 'Whistles',
+        'cat': 'Purring Sounds',
+        'computer': 'Chiptune',
+        'phone': 'Electronic Beeps',
+        'book': 'Page Turning Sounds',
+        'chair': 'Wooden Percussion',
+        'cup': 'Glass Harmonica',
     }
-    
     for obj in objects:
         name = obj['name'].lower()
         for key in object_mappings:
             if key in name:
-                instruments.append(object_mappings[key][0])
+                instruments.append(object_mappings[key])
+
+    for i, inst in enumerate(list(set(instruments))[:3]):
+        weight = 0.7 - (i * 0.1)
+        prompts.append(types.WeightedPrompt(text=inst, weight=weight))
+
+    # --- 3. Direct prompt embedding from visual context ---
+    prompts.append(types.WeightedPrompt(text=f"{brightness} lighting", weight=0.5))
+    prompts.append(types.WeightedPrompt(text=f"{weather} weather", weight=0.5))
+    prompts.append(types.WeightedPrompt(text=f"{time_of_day} time", weight=0.5))
     
-    # Brightness mapping
-    brightness_mapping = {
-        'dark': ('Spacey Synths', 'Ominous Drone', 0.3),
-        'dim': ('Warm Acoustic Guitar', 'Ambient', 0.5),
-        'medium': ('Rhodes Piano', 'Jazz Fusion', 0.7),
-        'bright': ('Trumpet', 'Upbeat', 0.9)
-    }
-    
-    if brightness in brightness_mapping:
-        inst, mood, bright_val = brightness_mapping[brightness]
-        instruments.append(inst)
-        moods.append(mood)
-        config_updates['brightness'] = bright_val
-    
-    # Weather mapping
-    weather_mappings = {
-        'sunny': ('Steel Drum', 'Upbeat'),
-        'rainy': ('Piano', 'Melancholic'),
-        'cloudy': ('Cello', 'Subdued Melody'),
-        'fog': ('Synth Pads', 'Dreamy'),
-        'clear': ('Acoustic Guitar', 'Peaceful')
-    }
-    
-    if weather in weather_mappings:
-        instruments.append(weather_mappings[weather][0])
-        moods.append(weather_mappings[weather][1])
-    
-    # Time of day mapping
-    time_mappings = {
-        'morning': ('Acoustic Guitar', 'Fresh', 0.7),
-        'afternoon': ('Piano', 'Balanced', 0.8),
-        'evening': ('Saxophone', 'Mellow', 0.6),
-        'night': ('Synth Pads', 'Dreamy', 0.5)
-    }
-    
-    if time_of_day in time_mappings:
-        instruments.append(time_mappings[time_of_day][0])
-        moods.append(time_mappings[time_of_day][1])
-        config_updates['brightness'] = time_mappings[time_of_day][2]
-    
-    # Motion mapping
-    if motion > 0.5:  # High motion
-        genres.append('Drum & Bass')
-        config_updates['bpm'] = min(180, config_updates.get('bpm', 120) + 20)
-        config_updates['density'] = 0.8
-    elif motion > 0.2:  # Medium motion
-        genres.append('Funk')
+    if motion > 0.5:
+        prompts.append(types.WeightedPrompt(text="high motion", weight=0.6))
+        config_updates['bpm'] = 160
+        config_updates['density'] = 0.9
+    elif motion > 0.2:
+        prompts.append(types.WeightedPrompt(text="medium motion", weight=0.5))
         config_updates['bpm'] = 120
         config_updates['density'] = 0.6
-    else:  # Low motion
-        genres.append('Ambient')
+    else:
+        prompts.append(types.WeightedPrompt(text="low motion", weight=0.4))
         config_updates['bpm'] = 80
-        config_updates['density'] = 0.4
-    
-    # Color mood mapping
-    color_moods = {
-        'red': 'Passionate',
-        'blue': 'Calm',
-        'green': 'Organic',
-        'yellow': 'Happy',
-        'black': 'Dark',
-        'white': 'Pure',
-        'neutral': 'Balanced'
-    }
-    
-    for color in colors:
-        if color in color_moods:
-            moods.append(color_moods[color])
-    
-    # Scale selection based on mood
+        config_updates['density'] = 0.3
+
+    # --- 4. Add dominant colors as descriptive tags ---
+    color_desc = ", ".join(colors)
+    prompts.append(types.WeightedPrompt(text=f"color palette: {color_desc}", weight=0.4))
+
+    # --- 5. Scale selection based on mood polarity ---
     positive_moods = ['Happy', 'Upbeat', 'Bright', 'Pure']
     negative_moods = ['Melancholic', 'Ominous', 'Dark', 'Dreamy']
     
-    positive_count = sum(1 for mood in moods if mood in positive_moods)
-    negative_count = sum(1 for mood in moods if mood in negative_moods)
-    
-    if positive_count > negative_count:
+    pos_count = sum(1 for m in [best_mood] if m in positive_moods)
+    neg_count = sum(1 for m in [best_mood] if m in negative_moods)
+
+    if pos_count > neg_count:
         config_updates['scale'] = types.Scale.C_MAJOR_A_MINOR
-    elif negative_count > positive_count:
+    elif neg_count > pos_count:
         config_updates['scale'] = types.Scale.E_FLAT_MAJOR_C_MINOR
     else:
         config_updates['scale'] = types.Scale.G_MAJOR_E_MINOR
-    
-    # Create weighted prompts
-    weighted_prompts = []
-    
-    # Add primary genre with highest weight
-    if genres:
-        weighted_prompts.append(
-            types.WeightedPrompt(text=f"{genres[0]} genre", weight=1.0)
-        )
-    
-    # Add instruments with moderate weights
-    unique_instruments = list(set(instruments))
-    for i, inst in enumerate(unique_instruments[:3]):  # Limit to top 3 instruments
-        weight = 0.7 - (i * 0.1)  # First instrument gets higher weight
-        weighted_prompts.append(types.WeightedPrompt(text=inst, weight=max(0.3, weight)))
-    
-    # Add moods
-    unique_moods = list(set(moods))
-    for mood in unique_moods[:2]:  # Limit to top 2 moods
-        weighted_prompts.append(types.WeightedPrompt(text=mood, weight=0.5))
-    
-    # Add weather influence if significant
-    if weather in ['rainy', 'sunny', 'fog']:
-        weighted_prompts.append(
-            types.WeightedPrompt(text=f"{weather} atmosphere", weight=0.4)
-        )
-    
-    return weighted_prompts, config_updates
+
+    return prompts, config_updates
 
 # ---------- Music AI Setup ----------
 
