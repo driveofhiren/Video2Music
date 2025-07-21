@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Video2Music</title>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				max-width: 800px;
+				margin: 0 auto;
+				padding: 20px;
+			}
+			.container {
+				display: flex;
+				flex-direction: column;
+				gap: 20px;
+			}
+			.box {
+				border: 1px solid #ddd;
+				padding: 20px;
+				border-radius: 5px;
+			}
+			button {
+				padding: 10px 15px;
+				background: #4caf50;
+				color: white;
+				border: none;
+				cursor: pointer;
+			}
+			button:hover {
+				background: #45a049;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<h1>Video2Music Converter</h1>
+
+			<div class="box">
+				<h2>Upload Media</h2>
+				<form id="uploadForm" enctype="multipart/form-data">
+					<input
+						type="file"
+						name="file"
+						accept="image/*,video/*"
+						required
+					/>
+					<button type="submit">Process Media</button>
+				</form>
+			</div>
+
+			<div class="box">
+				<h2>Live Processing</h2>
+				<button id="liveBtn">Start Live Camera Processing</button>
+			</div>
+		</div>
+
+		<script>
+			document
+				.getElementById('uploadForm')
+				.addEventListener('submit', async (e) => {
+					e.preventDefault()
+					const formData = new FormData(e.target)
+
+					try {
+						const response = await fetch('/upload', {
+							method: 'POST',
+							body: formData,
+						})
+						const result = await response.json()
+						alert(result.message)
+					} catch (error) {
+						alert('Error: ' + error.message)
+					}
+				})
+
+			document
+				.getElementById('liveBtn')
+				.addEventListener('click', async () => {
+					try {
+						const response = await fetch('/start-live', {
+							method: 'POST',
+						})
+						const result = await response.json()
+						alert(result.message)
+					} catch (error) {
+						alert('Error: ' + error.message)
+					}
+				})
+		</script>
+	</body>
+</html>

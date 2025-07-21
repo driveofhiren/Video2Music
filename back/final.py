@@ -27,7 +27,7 @@ load_dotenv()
 
 # Initialize models globally
 model_st = SentenceTransformer('all-MiniLM-L6-v2')
-yolo_model = YOLO('yolov8s.pt')
+yolo_model = YOLO('yolov8n.pt')
 
 # Music configuration
 BUFFER_SECONDS = 1
@@ -43,7 +43,7 @@ INSTRUMENTS = [
     "Balalaika Ensemble", "Banjo", "Bass Clarinet", "Bongos", "Boomy Bass",
     "Bouzouki", "Buchla Synths", "Cello", "Charango", "Clavichord",
     "Conga Drums", "Didgeridoo", "Dirty Synths", "Djembe", "Drumline",
-    "Dulcimer", "Fiddle", "Flamenco Guitar", "Funk Drums", "Glockenspiel",
+    "Dulcimer", "Fiddle", "Flamenco Guitar", "Funk Drums", "Glockenspiel",    
     "Guitar", "Hang Drum", "Harmonica", "Harp", "Harpsichord",
     "Hurdy-gurdy", "Kalimba", "Koto", "Lyre", "Mandolin",
     "Maracas", "Marimba", "Mbira", "Mellotron", "Metallic Twang",
@@ -90,13 +90,13 @@ class MediaAnalyzer:
         self.classes = self._load_categories()
         self.prev_gray = None
         
-    def _load_categories(self, filename='categories_places365.txt'):
+    def _load_categories(self, filename='./models/categories_places365.txt'):
         with open(filename) as f:
             return [line.strip().split(' ')[0][3:] for line in f if line.strip()]
     
     def _load_places_model(self):
         model = models.resnet18(num_classes=365)
-        checkpoint = torch.load('resnet18_places365.pth.tar', map_location='cpu')
+        checkpoint = torch.load('./models/resnet18_places365.pth.tar', map_location='cpu')
         state_dict = {k.replace('module.', ''): v for k, v in checkpoint['state_dict'].items()}
         model.load_state_dict(state_dict)
         model.eval()
@@ -803,3 +803,21 @@ if __name__ == "__main__":
         asyncio.run(live_camera_processing())
     else:
         print("Please specify either --video, --photo, --photo-dir, or --live")
+
+# Add these at the end of final.py (don't modify existing code)
+
+async def process_upload(file_path: str, is_video: bool):
+    """Wrapper for your existing process_media function"""
+    try:
+        await process_media(file_path, is_video)
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+async def start_live_processing():
+    """Wrapper for live camera processing"""
+    try:
+        await live_camera_processing()
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
