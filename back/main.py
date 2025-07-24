@@ -1,12 +1,14 @@
 from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import os
 import uuid
 import asyncio
 from pathlib import Path
 from final import process_upload, start_live_processing
+import cv2
+import time
 
 app = FastAPI()
 
@@ -44,3 +46,31 @@ async def start_live():
     # Start live processing in background
     asyncio.create_task(start_live_processing())
     return {"message": "Live processing started - check your audio output"}
+
+# For video streaming (optional)
+async def generate_frames():
+    camera = cv2.VideoCapture(0)
+    try:
+        while True:
+            success, frame = camera.read()
+            if not success:
+                break
+            
+            # Process frame
+            frame = cv2.resize(frame, (640, 480))
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            time.sleep(0.1)
+    finally:
+        camera.release()
+
+@app.get('/video_feed')
+async def video_feed():
+    return StreamingResponse(generate_frames(), media_type='multipart/x-mixed-replace; boundary=frame')
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

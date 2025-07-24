@@ -22,12 +22,16 @@ from PIL import Image
 import glob
 import argparse
 
+# Check for GPU availability and set device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 # Load environment variables
 load_dotenv()
 
-# Initialize models globally
-model_st = SentenceTransformer('all-MiniLM-L6-v2')
-yolo_model = YOLO('yolov8n.pt')
+# Initialize models globally with GPU if available
+model_st = SentenceTransformer('all-MiniLM-L6-v2').to(device)
+yolo_model = YOLO('yolov8n.pt').to(device)
 
 # Music configuration
 BUFFER_SECONDS = 1
@@ -79,14 +83,14 @@ MOODS = [
     "Tight Groove", "Unsettling", "Upbeat", "Virtuoso", "Weird Noises"
 ]
 
-# Precompute embeddings
-instrument_embs = model_st.encode(INSTRUMENTS, convert_to_tensor=True)
-genre_embs = model_st.encode(GENRES, convert_to_tensor=True)
-mood_embs = model_st.encode(MOODS, convert_to_tensor=True)
+# Precompute embeddings on GPU if available
+instrument_embs = model_st.encode(INSTRUMENTS, convert_to_tensor=True).to(device)
+genre_embs = model_st.encode(GENRES, convert_to_tensor=True).to(device)
+mood_embs = model_st.encode(MOODS, convert_to_tensor=True).to(device)
 
 class MediaAnalyzer:
     def __init__(self):
-        self.places_model = self._load_places_model()
+        self.places_model = self._load_places_model().to(device)
         self.classes = self._load_categories()
         self.prev_gray = None
         
@@ -96,7 +100,7 @@ class MediaAnalyzer:
     
     def _load_places_model(self):
         model = models.resnet18(num_classes=365)
-        checkpoint = torch.load('./models/resnet18_places365.pth.tar', map_location='cpu')
+        checkpoint = torch.load('./models/resnet18_places365.pth.tar', map_location=device)
         state_dict = {k.replace('module.', ''): v for k, v in checkpoint['state_dict'].items()}
         model.load_state_dict(state_dict)
         model.eval()
@@ -110,7 +114,7 @@ class MediaAnalyzer:
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                 std=[0.229, 0.224, 0.225])
         ])
-        return preprocess(img).unsqueeze(0)
+        return preprocess(img).unsqueeze(0).to(device)
     
     def analyze_media(self, media_path: str, is_video: bool = False):
         if is_video:
@@ -125,7 +129,7 @@ class MediaAnalyzer:
         # Scene analysis
         input_tensor = self.preprocess_image(frame_resized)
         with torch.no_grad():
-            probs = F.softmax(self.places_model(input_tensor), 1)[0]
+            probs = F.softmax(self.places_model(input_tensor), 1)[0].cpu()
         top_probs, top_idxs = torch.topk(probs, 3)
         top_scenes = [(self.classes[i], float(p)) for i, p in zip(top_idxs, top_probs)]
         
@@ -158,7 +162,7 @@ class MediaAnalyzer:
         
         input_tensor = self.preprocess_image(img_resized)
         with torch.no_grad():
-            probs = F.softmax(self.places_model(input_tensor), 1)[0]
+            probs = F.softmax(self.places_model(input_tensor), 1)[0].cpu()
         top_probs, top_idxs = torch.topk(probs, 3)
         top_scenes = [(self.classes[i], float(p)) for i, p in zip(top_idxs, top_probs)]
         
@@ -228,7 +232,9 @@ class MediaAnalyzer:
         return np.mean(diff) / 255.0
     
     def _detect_objects(self, frame):
-        results = yolo_model(frame, verbose=False)[0]
+        # Move frame to GPU if available
+        frame_gpu = torch.from_numpy(frame).to(device) if torch.cuda.is_available() else frame
+        results = yolo_model(frame_gpu, verbose=False)[0]
         names = yolo_model.names
         detected_objects = []
         for box, cls, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
@@ -295,10 +301,10 @@ class EnhancedMusicGenerator:
         
         # 1. Stable Genre Selection
         scene_text = ', '.join([s[0].lower() for s in analysis['top_scenes']])
-        scene_emb = model_st.encode(scene_text, convert_to_tensor=True)
+        scene_emb = model_st.encode(scene_text, convert_to_tensor=True).to(device)
         
         if not self.genre_lock or not self.last_genre:
-            genre_scores = util.cos_sim(scene_emb, genre_embs)[0]
+            genre_scores = util.cos_sim(scene_emb, genre_embs)[0].cpu().numpy()
             
             # History bias
             for i, genre in enumerate(GENRES):
@@ -317,7 +323,7 @@ class EnhancedMusicGenerator:
         prompts.append(types.WeightedPrompt(text=self.last_genre, weight=1.0))
         
         # 2. Adaptive Mood Selection
-        mood_scores = util.cos_sim(scene_emb, mood_embs)[0]
+        mood_scores = util.cos_sim(scene_emb, mood_embs)[0].cpu().numpy()
         
         if is_video:
             self.motion_window.append(analysis['motion'])
@@ -361,8 +367,8 @@ class EnhancedMusicGenerator:
         new_target_weights = {}
         if instrument_candidates:
             instrument_text = " ".join(instrument_candidates)
-            instrument_emb = model_st.encode(instrument_text, convert_to_tensor=True)
-            inst_scores = util.cos_sim(instrument_emb, instrument_embs)[0]
+            instrument_emb = model_st.encode(instrument_text, convert_to_tensor=True).to(device)
+            inst_scores = util.cos_sim(instrument_emb, instrument_embs)[0].cpu().numpy()
             
             base_weights = {INSTRUMENTS[i]: float(s)*0.7 for i,s in enumerate(inst_scores)}
             
@@ -429,7 +435,7 @@ class EnhancedMusicGenerator:
         return candidates[0][0]
     
     def _get_instruments_for_scene(self, scene_text: str) -> List[str]:
-        scene_emb = model_st.encode(scene_text, convert_to_tensor=True)
+        scene_emb = model_st.encode(scene_text, convert_to_tensor=True).to(device)
         inst_scores = util.cos_sim(scene_emb, instrument_embs)[0]
         top_inst_indices = torch.topk(inst_scores, 5).indices
         return [INSTRUMENTS[i] for i in top_inst_indices]
@@ -644,7 +650,7 @@ async def live_camera_processing():
     cap = None
     for _ in range(3):  # Try 3 times to open camera
         try:
-            cap = cv2.VideoCapture('https://192.168.2.106:8080/video')
+            cap = cv2.VideoCapture(0)
             if cap.isOpened():
                 break
         except Exception as e:
@@ -803,8 +809,6 @@ if __name__ == "__main__":
         asyncio.run(live_camera_processing())
     else:
         print("Please specify either --video, --photo, --photo-dir, or --live")
-
-# Add these at the end of final.py (don't modify existing code)
 
 async def process_upload(file_path: str, is_video: bool):
     """Wrapper for your existing process_media function"""
