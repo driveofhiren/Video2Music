@@ -12,15 +12,15 @@ from torchvision import transforms
 from sklearn.cluster import KMeans
 from ultralytics import YOLO
 from sentence_transformers import SentenceTransformer, util
-import pyaudio
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 import hashlib
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Callable, Awaitable
 from PIL import Image
 import glob
 import argparse
+import json
 
 # Check for GPU availability and set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,7 +36,7 @@ yolo_model = YOLO('yolov8n.pt').to(device)
 # Music configuration
 BUFFER_SECONDS = 1
 CHUNK = 4200
-FORMAT = pyaudio.paInt16
+FORMAT = 'int16'
 CHANNELS = 2
 MODEL = 'models/lyria-realtime-exp'
 OUTPUT_RATE = 48000
@@ -93,7 +93,21 @@ class MediaAnalyzer:
         self.places_model = self._load_places_model().to(device)
         self.classes = self._load_categories()
         self.prev_gray = None
+        # Initialize depth estimation model
+        self.depth_model = self._load_depth_model().to(device)
+        self.depth_transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((256, 256)),  # Depth model expects 256x256
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize for depth model
+        ])
         
+    def _load_depth_model(self):
+        # Using a lightweight depth estimation model
+        model = torch.hub.load('intel-isl/MiDaS', 'MiDaS_small')
+        model.eval()
+        return model
+    
     def _load_categories(self, filename='./models/categories_places365.txt'):
         with open(filename) as f:
             return [line.strip().split(' ')[0][3:] for line in f if line.strip()]
@@ -115,6 +129,51 @@ class MediaAnalyzer:
                                 std=[0.229, 0.224, 0.225])
         ])
         return preprocess(img).unsqueeze(0).to(device)
+    
+    def analyze_depth(self, frame):
+        """Estimate depth and return depth characteristics"""
+        input_tensor = self.depth_transform(frame).unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            depth_pred = self.depth_model(input_tensor)
+        
+        # Convert to numpy and normalize
+        depth_map = depth_pred.squeeze().cpu().numpy()
+        depth_map = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())
+        
+        # Calculate depth characteristics
+        avg_depth = np.mean(depth_map)
+        depth_variance = np.var(depth_map)
+        
+        # Classify depth profile
+        if depth_variance < 0.01:
+            depth_profile = "flat"
+        elif avg_depth < 0.3:
+            if depth_variance > 0.1:
+                depth_profile = "shallow_with_detail"
+            else:
+                depth_profile = "shallow"
+        elif avg_depth > 0.7:
+            if depth_variance > 0.1:
+                depth_profile = "deep_with_detail"
+            else:
+                depth_profile = "deep"
+        else:
+            if depth_variance > 0.15:
+                depth_profile = "medium_with_detail"
+            else:
+                depth_profile = "medium"
+        
+        # Calculate foreground/background ratio
+        fg_ratio = np.mean(depth_map < 0.5)
+        
+        return {
+            'depth_map': depth_map,
+            'depth_profile': depth_profile,
+            'avg_depth': float(avg_depth),
+            'depth_variance': float(depth_variance),
+            'fg_ratio': float(fg_ratio)
+        }
     
     def analyze_media(self, media_path: str, is_video: bool = False):
         if is_video:
@@ -141,6 +200,7 @@ class MediaAnalyzer:
         self.prev_gray = gray
         objects = self._detect_objects(frame_resized)
         colors = self._get_dominant_colors(frame_resized)
+        depth = self.analyze_depth(frame_resized)  # New depth analysis
         
         return {
             'top_scenes': top_scenes,
@@ -150,6 +210,7 @@ class MediaAnalyzer:
             'motion': motion,
             'objects': objects,
             'colors': colors,
+            'depth': depth,
             'frame_resized': frame_resized
         }
     
@@ -171,6 +232,7 @@ class MediaAnalyzer:
         time_of_day = self._get_time_of_day_from_image(img_resized)
         objects = self._detect_objects(img_resized)
         colors = self._get_dominant_colors(img_resized)
+        depth = self.analyze_depth(img_resized)  # New depth analysis
         
         return {
             'top_scenes': top_scenes,
@@ -180,6 +242,7 @@ class MediaAnalyzer:
             'motion': 0.0,
             'objects': objects,
             'colors': colors,
+            'depth': depth,
             'frame_resized': img_resized
         }
     
@@ -270,387 +333,444 @@ class MediaAnalyzer:
 
 class EnhancedMusicGenerator:
     def __init__(self):
-        self.object_to_instrument = {
-            'person': "Vocal Choir",
-            'car': "Dirty Synths",
-            'tree': "Wind Chimes",
-            'dog': "Whistles",
-            'cat': "Purring Sounds",
-            'computer': "Chiptune",
-            'phone': "Electronic Beeps",
-            'book': "Page Turning Sounds",
-            'chair': "Wooden Percussion",
-            'cup': "Glass Harmonica",
-            'guitar': "Acoustic Guitar",
-            'piano': "Grand Piano",
-            'violin': "String Ensemble",
-            'clock': "Ticking Sounds"
-        }
-        self.genre_history = []
-        self.mood_history = []
-        self.instrument_history = []
+        # Initialize AI client for prompt generation
+        self.ai_client = None
+        self.base_prompts = []
+        self.base_prompts_generated = False
+        
+        # Tracking variables for dynamic prompts
         self.motion_window = []
-        self.genre_lock = False
-        self.target_instrument_weights = {}
-        self.last_genre = ""
-        self.last_mood = ""
+        self.brightness_history = []
+        self.current_dynamic_prompts = []
         
-    def generate_prompts(self, analysis: Dict, is_video: bool) -> Tuple[List[types.WeightedPrompt], Dict]:
-        prompts = []
-        config_updates = {}
+        # Analysis aggregation for first 5 seconds
+        self.initial_analysis_data = []
+        self.analysis_start_time = None
         
-        # 1. Stable Genre Selection
-        scene_text = ', '.join([s[0].lower() for s in analysis['top_scenes']])
-        scene_emb = model_st.encode(scene_text, convert_to_tensor=True).to(device)
-        
-        if not self.genre_lock or not self.last_genre:
-            genre_scores = util.cos_sim(scene_emb, genre_embs)[0].cpu().numpy()
+    def initialize_ai_client(self):
+        """Initialize the AI client for prompt generation"""
+        try:
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("No AI API key found. Set GEMINI_API_KEY environment variable.")
             
-            # History bias
-            for i, genre in enumerate(GENRES):
-                if genre in self.genre_history[-3:]:
-                    genre_scores[i] += 0.2
+            import google.generativeai as genai_client
+            genai_client.configure(api_key=api_key)
             
-            top_genres = [(GENRES[i], float(s)) for i,s in enumerate(genre_scores)][:3]
-            self.last_genre = self._get_best_match(top_genres, self.last_genre)
-            self.genre_history.append(self.last_genre)
-            if len(self.genre_history) > 5:
-                self.genre_history.pop(0)
-            
-            if self.genre_history.count(self.last_genre) >= 3:
-                self.genre_lock = True
-        
-        prompts.append(types.WeightedPrompt(text=self.last_genre, weight=1.0))
-        
-        # 2. Adaptive Mood Selection
-        mood_scores = util.cos_sim(scene_emb, mood_embs)[0].cpu().numpy()
-        
-        if is_video:
-            self.motion_window.append(analysis['motion'])
-            if len(self.motion_window) > 5:
-                self.motion_window.pop(0)
-            smoothed_motion = sum(self.motion_window)/len(self.motion_window)
-            
-            motion_factor = min(1.0, smoothed_motion * 1.5)
-            for i, mood in enumerate(MOODS):
-                if "Upbeat" in mood or "Danceable" in mood:
-                    mood_scores[i] += 0.3 * motion_factor
-                elif "Chill" in mood or "Ambient" in mood:
-                    mood_scores[i] += 0.3 * (1 - motion_factor)
-        
-        # Mood history bias
-        for i, mood in enumerate(MOODS):
-            if mood in self.mood_history[-2:]:
-                mood_scores[i] += 0.15
-                
-        top_moods = [(MOODS[i], float(s)) for i,s in enumerate(mood_scores)][:2]
-        self.last_mood = self._get_best_match(top_moods, self.last_mood)
-        self.mood_history.append(self.last_mood)
-        if len(self.mood_history) > 4:
-            self.mood_history.pop(0)
-            
-        prompts.append(types.WeightedPrompt(text=self.last_mood, weight=0.8))
-        
-        # 3. Motion-Modulated Instruments
-        object_names = [obj['name'].lower() for obj in analysis['objects']]
-        instrument_candidates = []
-        
-        for obj in object_names:
-            for key, instrument in self.object_to_instrument.items():
-                if key in obj:
-                    instrument_candidates.append(instrument)
-        
-        if not instrument_candidates:
-            instrument_candidates = self._get_instruments_for_scene(scene_text)
-        
-        # Calculate new target weights
-        new_target_weights = {}
-        if instrument_candidates:
-            instrument_text = " ".join(instrument_candidates)
-            instrument_emb = model_st.encode(instrument_text, convert_to_tensor=True).to(device)
-            inst_scores = util.cos_sim(instrument_emb, instrument_embs)[0].cpu().numpy()
-            
-            base_weights = {INSTRUMENTS[i]: float(s)*0.7 for i,s in enumerate(inst_scores)}
-            
-            motion_factor = smoothed_motion if is_video else 0.5
-            for inst in base_weights:
-                if "Drum" in inst or "Beat" in inst:
-                    new_target_weights[inst] = base_weights[inst] * (0.8 + motion_factor*0.4)
-                elif "Pad" in inst or "String" in inst:
-                    new_target_weights[inst] = base_weights[inst] * (0.8 + (1-motion_factor)*0.4)
-                else:
-                    new_target_weights[inst] = base_weights[inst]
-        
-        # Smooth weight transitions
-        if not self.target_instrument_weights:
-            self.target_instrument_weights = new_target_weights
-        else:
-            for inst in self.target_instrument_weights:
-                if inst in new_target_weights:
-                    self.target_instrument_weights[inst] = (
-                        0.8 * self.target_instrument_weights[inst] + 
-                        0.2 * new_target_weights[inst]
-                    )
-        
-        # Add instruments to prompts
-        sorted_instruments = sorted(
-            self.target_instrument_weights.items(), 
-            key=lambda x: -x[1]
-        )[:3]
-        
-        for i, (inst, weight) in enumerate(sorted_instruments):
-            final_weight = weight * (1.0 - i*0.15)
-            prompts.append(types.WeightedPrompt(text=inst, weight=final_weight))
-        
-        # 4. Environmental Context
-        prompts.append(types.WeightedPrompt(
-            text=f"{analysis['brightness']} lighting", 
-            weight=0.4 + (smoothed_motion*0.1 if is_video else 0)
-        ))
-        prompts.append(types.WeightedPrompt(
-            text=f"{analysis['weather']} weather", 
-            weight=0.4
-        ))
-        
-        # 5. Stable Configuration
-        if is_video:
-            config_updates['density'] = 0.5 + (smoothed_motion * 0.3)
-            if analysis['brightness'] == "dark":
-                config_updates['brightness'] = 0.4
-            elif analysis['brightness'] == "bright":
-                config_updates['brightness'] = 0.8
-        else:
-            config_updates['density'] = 0.5
-        
-        return prompts, config_updates
-    
-    def _get_best_match(self, candidates: List[Tuple[str, float]], last_value: str) -> str:
-        if not last_value:
-            return candidates[0][0]
-        
-        for candidate, score in candidates:
-            if candidate == last_value:
-                return candidate
-                
-        return candidates[0][0]
-    
-    def _get_instruments_for_scene(self, scene_text: str) -> List[str]:
-        scene_emb = model_st.encode(scene_text, convert_to_tensor=True).to(device)
-        inst_scores = util.cos_sim(scene_emb, instrument_embs)[0]
-        top_inst_indices = torch.topk(inst_scores, 5).indices
-        return [INSTRUMENTS[i] for i in top_inst_indices]
-
-class PromptSmoother:
-    def __init__(self):
-        self.current_prompts = []
-        self.target_prompts = []
-        self.transition_start = 0
-        self.transition_duration = 8.0
-    
-    def update_target(self, new_prompts: List[types.WeightedPrompt], current_time: float):
-        self.target_prompts = new_prompts
-        self.transition_start = current_time
-    
-    def get_current_prompts(self, current_time: float) -> List[types.WeightedPrompt]:
-        if not self.target_prompts or current_time >= self.transition_start + self.transition_duration:
-            self.current_prompts = self.target_prompts
-            return self.current_prompts
-            
-        progress = (current_time - self.transition_start) / self.transition_duration
-        blended_prompts = []
-        
-        current_dict = {p.text: p for p in self.current_prompts}
-        target_dict = {p.text: p for p in self.target_prompts}
-        
-        all_prompts = set(current_dict.keys()).union(set(target_dict.keys()))
-        
-        for prompt_text in all_prompts:
-            current_p = current_dict.get(prompt_text)
-            target_p = target_dict.get(prompt_text)
-            
-            if current_p and target_p:
-                new_weight = current_p.weight * (1 - progress) + target_p.weight * progress
-                blended_prompts.append(types.WeightedPrompt(text=prompt_text, weight=new_weight))
-            elif current_p:
-                new_weight = current_p.weight * (1 - progress)
-                if new_weight > 0.1:
-                    blended_prompts.append(types.WeightedPrompt(text=prompt_text, weight=new_weight))
-            elif target_p:
-                new_weight = target_p.weight * progress
-                if new_weight > 0.1:
-                    blended_prompts.append(types.WeightedPrompt(text=prompt_text, weight=new_weight))
-        
-        blended_prompts.sort(key=lambda x: -x.weight)
-        return blended_prompts
-
-async def process_media(media_path: str, is_video: bool = False):
-    api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
-    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
-    media_analyzer = MediaAnalyzer()
-    prompt_generator = EnhancedMusicGenerator()
-    prompt_smoother = PromptSmoother()
-    p = pyaudio.PyAudio()
-    
-    if is_video:
-        cap = cv2.VideoCapture(media_path)
-        if not cap.isOpened():
-            print(f"Error: Could not open video at {media_path}")
-            return
-    else:
-        if not os.path.exists(media_path):
-            print(f"Error: Could not find photo at {media_path}")
-            return
-    
-    async with client.aio.live.music.connect(model=MODEL) as session:
-        print("Connected to music session.")
-        
-        config = types.LiveMusicGenerationConfig(
-            bpm=120,  # Fixed BPM
-            scale=types.Scale.C_MAJOR_A_MINOR,
-            brightness=0.7,
-            density=0.6,
-            guidance=6.0
-        )
-        await session.set_music_generation_config(config=config)
-        await session.play()
-        
-        async def receive_audio():
-            chunks_count = 0
-            output_stream = p.open(
-                format=FORMAT, channels=CHANNELS, rate=OUTPUT_RATE, output=True, frames_per_buffer=CHUNK)
-            try:
-                async for message in session.receive():
-                    chunks_count += 1
-                    if chunks_count == 1:
-                        await asyncio.sleep(BUFFER_SECONDS)
-                    if message.server_content:
-                        audio_data = message.server_content.audio_chunks[0].data
-                        output_stream.write(audio_data)
-                    elif message.filtered_prompt:
-                        print("Filtered prompt:", message.filtered_prompt)
-                    await asyncio.sleep(10**-12)
-            finally:
-                output_stream.close()
-        
-        def display_analysis(analysis, frame):
-            object_names = ', '.join([obj['name'] for obj in analysis['objects']]) if analysis['objects'] else 'None'
-            info = [
-                f"Scene 1: {analysis['top_scenes'][0][0]} ({analysis['top_scenes'][0][1]*100:.1f}%)",
-                f"Scene 2: {analysis['top_scenes'][1][0]} ({analysis['top_scenes'][1][1]*100:.1f}%)",
-                f"Scene 3: {analysis['top_scenes'][2][0]} ({analysis['top_scenes'][2][1]*100:.1f}%)",
-                f"Objects: {object_names}",
-                f"Lighting: {analysis['brightness']}",
-                f"Weather: {analysis['weather']}",
-                f"Time: {analysis['time_of_day']}",
-                f"Motion: {analysis['motion']:.2f}" if is_video else "Photo (no motion)",
-                f"Colors: {' '.join(analysis['colors'])}"
+            # Try different model names that are currently available
+            model_names_to_try = [
+                'gemini-1.5-flash',
+                'gemini-1.5-pro', 
+                'gemini-1.0-pro',
+                'models/gemini-1.5-flash',
+                'models/gemini-1.5-pro',
+                'models/gemini-1.0-pro'
             ]
             
-            y = 30
-            for line in info:
-                cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                y += 25
+            for model_name in model_names_to_try:
+                try:
+                    self.ai_client = genai_client.GenerativeModel(model_name)
+                    # Test the model with a simple prompt
+                    test_response = self.ai_client.generate_content("Hello")
+                    print(f"AI client initialized successfully with model: {model_name}")
+                    return
+                except Exception as model_error:
+                    print(f"Model {model_name} failed: {model_error}")
+                    continue
             
-            cv2.imshow("Media Analyzer", frame)
-            cv2.waitKey(1)
+            # If all models fail, list available models
+            try:
+                print("Listing available models:")
+                for model in genai_client.list_models():
+                    if 'generateContent' in model.supported_generation_methods:
+                        print(f"Available model: {model.name}")
+            except Exception as list_error:
+                print(f"Could not list models: {list_error}")
+            
+            raise Exception("No working Gemini model found")
+            
+        except Exception as e:
+            print(f"Failed to initialize AI client: {e}")
+            self.ai_client = None
+
+    def collect_initial_analysis(self, analysis: Dict) -> bool:
+        """
+        Collect analysis data for the first 5 seconds
+        Returns True when 5 seconds of data is collected
+        """
+        if self.analysis_start_time is None:
+            self.analysis_start_time = time.time()
+            print("Starting initial 5-second analysis collection...")
         
-        last_update_time = 0
-        current_config = config
+        # Store analysis data
+        current_time = time.time()
+        analysis_with_time = {
+            **analysis,
+            'timestamp': current_time - self.analysis_start_time
+        }
+        self.initial_analysis_data.append(analysis_with_time)
         
-        async def media_processing_loop():
-            nonlocal last_update_time, current_config
-            if is_video:
-                print(f"Processing video: {media_path}")
-                print("Press 'q' in the video window to quit.")
+        # Check if 5 seconds have passed
+        if current_time - self.analysis_start_time >= 5.0:
+            print(f"Collected {len(self.initial_analysis_data)} analysis frames over 5 seconds")
+            return True
+        
+        return False
+
+    def aggregate_analysis_data(self) -> Dict:
+        """
+        Aggregate the collected 5-second analysis data into a comprehensive summary
+        """
+        if not self.initial_analysis_data:
+            return {}
+        
+        # Aggregate scenes with confidence scores
+        scene_counts = {}
+        for analysis in self.initial_analysis_data:
+            for scene, confidence in analysis['top_scenes']:
+                if scene not in scene_counts:
+                    scene_counts[scene] = []
+                scene_counts[scene].append(confidence)
+        
+        # Get most consistent scenes
+        avg_scene_confidence = {scene: np.mean(confidences) 
+                               for scene, confidences in scene_counts.items()}
+        top_consistent_scenes = sorted(avg_scene_confidence.items(), 
+                                     key=lambda x: -x[1])[:5]
+        
+        # Aggregate objects
+        object_counts = {}
+        for analysis in self.initial_analysis_data:
+            for obj in analysis['objects']:
+                obj_name = obj['name']
+                if obj_name not in object_counts:
+                    object_counts[obj_name] = []
+                object_counts[obj_name].append(obj['confidence'])
+        
+        # Get most consistent objects
+        avg_object_confidence = {obj: np.mean(confidences) 
+                               for obj, confidences in object_counts.items()}
+        top_consistent_objects = sorted(avg_object_confidence.items(), 
+                                      key=lambda x: -x[1])[:8]
+        
+        # Aggregate environmental data
+        brightness_modes = [a['brightness'] for a in self.initial_analysis_data]
+        weather_modes = [a['weather'] for a in self.initial_analysis_data]
+        time_modes = [a['time_of_day'] for a in self.initial_analysis_data]
+        
+        # Get most common environmental conditions
+        most_common_brightness = max(set(brightness_modes), key=brightness_modes.count)
+        most_common_weather = max(set(weather_modes), key=weather_modes.count)
+        most_common_time = max(set(time_modes), key=time_modes.count)
+        
+        # Aggregate motion data
+        motion_values = [a.get('motion', 0) for a in self.initial_analysis_data]
+        avg_motion = np.mean(motion_values)
+        motion_variance = np.var(motion_values)
+        
+        # Aggregate colors
+        all_colors = []
+        for analysis in self.initial_analysis_data:
+            all_colors.extend(analysis['colors'])
+        color_counts = {color: all_colors.count(color) for color in set(all_colors)}
+        dominant_colors = sorted(color_counts.items(), key=lambda x: -x[1])[:5]
+        
+        # Aggregate depth information
+        depth_profiles = [a['depth']['depth_profile'] for a in self.initial_analysis_data 
+                         if 'depth' in a and 'depth_profile' in a['depth']]
+        most_common_depth = max(set(depth_profiles), key=depth_profiles.count) if depth_profiles else "medium"
+        
+        avg_depth_values = [a['depth']['avg_depth'] for a in self.initial_analysis_data 
+                           if 'depth' in a and 'avg_depth' in a['depth']]
+        avg_depth = np.mean(avg_depth_values) if avg_depth_values else 0.5
+        
+        return {
+            'scenes': top_consistent_scenes,
+            'objects': top_consistent_objects,
+            'brightness': most_common_brightness,
+            'weather': most_common_weather,
+            'time_of_day': most_common_time,
+            'avg_motion': avg_motion,
+            'motion_variance': motion_variance,
+            'dominant_colors': dominant_colors,
+            'depth_profile': most_common_depth,
+            'avg_depth': avg_depth,
+            'total_frames': len(self.initial_analysis_data)
+        }
+
+    async def generate_base_prompts_with_ai(self, aggregated_data: Dict) -> List[types.WeightedPrompt]:
+        """
+        Use AI to generate base prompts from aggregated analysis data
+        """
+        if not self.ai_client:
+            self.initialize_ai_client()
+            if not self.ai_client:
+                return self._fallback_base_prompts(aggregated_data)
+        
+        # Create detailed prompt for AI
+        ai_prompt = f"""
+Based on the following 5-second video analysis data, generate music prompts that would create an appropriate soundtrack. 
+
+Video Analysis Data:
+- Main Scenes: {', '.join([f"{scene} ({conf:.2f})" for scene, conf in aggregated_data['scenes'][:3]])}
+- Key Objects: {', '.join([f"{obj} ({conf:.2f})" for obj, conf in aggregated_data['objects'][:5]])}
+- Lighting: {aggregated_data['brightness']}
+- Weather: {aggregated_data['weather']}
+- Time of Day: {aggregated_data['time_of_day']}
+- Average Motion: {aggregated_data['avg_motion']:.2f} (0=static, 1=very dynamic)
+- Motion Variance: {aggregated_data['motion_variance']:.3f}
+- Dominant Colors: {', '.join([color for color, count in aggregated_data['dominant_colors'][:3]])}
+- Depth Profile: {aggregated_data['depth_profile']}
+- Average Depth: {aggregated_data['avg_depth']:.2f}
+
+Available Music Elements:
+GENRES: {', '.join(GENRES[:20])}... (and more)
+INSTRUMENTS: {', '.join(INSTRUMENTS[:20])}... (and more)  
+MOODS: {', '.join(MOODS[:20])}... (and more)
+
+Generate 4-6 base music prompts that would create a soundtrack matching this video content. Each prompt should be:
+1. One specific genre, instrument, or mood from the available options
+2. Appropriate for the analyzed content
+3. Weighted from 0.5 to 1.0 based on relevance
+
+Format your response as JSON:
+{{
+  "prompts": [
+    {{"text": "Jazz Fusion", "weight": 0.9, "reasoning": "Urban scene with moderate motion"}},
+    {{"text": "Rhodes Piano", "weight": 0.8, "reasoning": "Matches the indoor sophisticated setting"}},
+    ...
+  ]
+}}
+"""
+
+        try:
+            # Use the correct Gemini API syntax
+            response = self.ai_client.generate_content(ai_prompt)
+            response_text = response.text.strip()
+            
+            # Parse AI response
+            if response_text.startswith('```json'):
+                response_text = response_text[7:-3]
+            elif response_text.startswith('```'):
+                response_text = response_text[3:-3]
                 
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    
-                    analysis = media_analyzer.analyze_media(frame, is_video=True)
-                    current_time = time.time()
-                    
-                    if current_time - last_update_time > 3.0:
-                        new_prompts, config_updates = prompt_generator.generate_prompts(analysis, is_video=True)
-                        
-                        if config_updates:
-                            for key, value in config_updates.items():
-                                setattr(current_config, key, value)
-                            await session.set_music_generation_config(config=current_config)
-                        
-                        prompt_smoother.update_target(new_prompts, current_time)
-                        last_update_time = current_time
-                    
-                    current_prompts = prompt_smoother.get_current_prompts(current_time)
-                    if current_prompts:
-                        for i, prompt in enumerate(current_prompts, 1):
-                            print(f"{i}. {prompt.text} (weight: {prompt.weight:.2f})")
-                        await session.set_weighted_prompts(prompts=current_prompts)
-                    
-                    display_analysis(analysis, analysis['frame_resized'])
-                    
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-                    
-                    await asyncio.sleep(0.1)
+            ai_result = json.loads(response_text)
+            
+            base_prompts = []
+            for prompt_data in ai_result.get('prompts', []):
+                text = prompt_data['text']
+                weight = float(prompt_data['weight'])
                 
-                cap.release()
+                # Validate that the prompt text exists in our available options
+                if (text in GENRES or text in INSTRUMENTS or text in MOODS):
+                    base_prompts.append(types.WeightedPrompt(text=text, weight=weight))
+                    print(f"AI Base Prompt: {text} (weight: {weight:.2f}) - {prompt_data.get('reasoning', '')}")
+            
+            if len(base_prompts) >= 3:
+                print(f"Successfully generated {len(base_prompts)} base prompts with AI")
+                return base_prompts
             else:
-                print(f"Processing photo: {media_path}")
+                print("AI generated insufficient valid prompts, using fallback")
+                return self._fallback_base_prompts(aggregated_data)
                 
-                analysis = media_analyzer.analyze_media(media_path, is_video=False)
-                current_time = time.time()
-                
-                new_prompts, config_updates = prompt_generator.generate_prompts(analysis, is_video=False)
-                
-                if config_updates:
-                    for key, value in config_updates.items():
-                        setattr(current_config, key, value)
-                    await session.set_music_generation_config(config=current_config)
-                
-                if new_prompts:
-                    for i, prompt in enumerate(new_prompts, 1):
-                        print(f"{i}. {prompt.text} (weight: {prompt.weight:.2f})")
-                    await session.set_weighted_prompts(prompts=new_prompts)
-                
-                display_analysis(analysis, analysis['frame_resized'])
-                
-                while True:
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-                    await asyncio.sleep(0.1)
-            
-            cv2.destroyAllWindows()
+        except Exception as e:
+            print(f"AI prompt generation failed: {e}")
+            return self._fallback_base_prompts(aggregated_data)
+
+    def _fallback_base_prompts(self, aggregated_data: Dict) -> List[types.WeightedPrompt]:
+        """
+        Fallback method to generate base prompts without AI
+        """
+        print("Using fallback base prompt generation")
         
-        await asyncio.gather(
-            receive_audio(),
-            media_processing_loop()
-        )
-    
-    p.terminate()
+        base_prompts = []
+        
+        # Genre based on scene and motion
+        primary_scene = aggregated_data['scenes'][0][0] if aggregated_data['scenes'] else "room"
+        motion_level = aggregated_data['avg_motion']
+        
+        if motion_level > 0.3:
+            if "street" in primary_scene or "road" in primary_scene:
+                base_prompts.append(types.WeightedPrompt(text="Electronic", weight=0.9))
+            elif "park" in primary_scene or "outdoor" in primary_scene:
+                base_prompts.append(types.WeightedPrompt(text="Indie Folk", weight=0.8))
+            else:
+                base_prompts.append(types.WeightedPrompt(text="Contemporary R&B", weight=0.8))
+        else:
+            if "room" in primary_scene or "indoor" in primary_scene:
+                base_prompts.append(types.WeightedPrompt(text="Lo-Fi Hip Hop", weight=0.9))
+            else:
+                base_prompts.append(types.WeightedPrompt(text="Ambient", weight=0.8))
+        
+        # Instrument based on objects and environment
+        key_objects = [obj[0] for obj in aggregated_data['objects'][:3]]
+        if any("person" in obj for obj in key_objects):
+            base_prompts.append(types.WeightedPrompt(text="Warm Acoustic Guitar", weight=0.8))
+        if any("car" in obj or "vehicle" in obj for obj in key_objects):
+            base_prompts.append(types.WeightedPrompt(text="Synth Pads", weight=0.7))
+        
+        # Mood based on lighting and depth
+        if aggregated_data['brightness'] == "bright":
+            base_prompts.append(types.WeightedPrompt(text="Upbeat", weight=0.8))
+        elif aggregated_data['brightness'] == "dark":
+            base_prompts.append(types.WeightedPrompt(text="Dreamy", weight=0.8))
+        else:
+            base_prompts.append(types.WeightedPrompt(text="Chill", weight=0.7))
+        
+        # Add depth-based prompt
+        if aggregated_data['depth_profile'] in ['deep', 'deep_with_detail']:
+            base_prompts.append(types.WeightedPrompt(text="Ethereal Ambience", weight=0.7))
+        
+        return base_prompts[:6]  # Limit to 6 base prompts
 
-async def batch_process_photos(photo_dir: str):
-    photo_paths = glob.glob(os.path.join(photo_dir, "*.jpg")) + glob.glob(os.path.join(photo_dir, "*.png"))
-    
-    for photo_path in photo_paths:
-        print(f"\nProcessing photo: {photo_path}")
-        await process_media(photo_path, is_video=False)
-        await asyncio.sleep(1)
+    def generate_dynamic_prompts(self, analysis: Dict) -> List[types.WeightedPrompt]:
+        """
+        Generate dynamic prompts that change based on current conditions
+        These complement the stable base prompts
+        """
+        dynamic_prompts = []
+        
+        # Motion-based dynamic prompts
+        current_motion = analysis.get('motion', 0)
+        self.motion_window.append(current_motion)
+        if len(self.motion_window) > 10:
+            self.motion_window.pop(0)
+        
+        smoothed_motion = np.mean(self.motion_window)
+        
+        # Motion intensity prompts
+        if smoothed_motion > 0.4:
+            dynamic_prompts.append(types.WeightedPrompt(text="Fat Beats", weight=0.6))
+        elif smoothed_motion > 0.2:
+            dynamic_prompts.append(types.WeightedPrompt(text="Tight Groove", weight=0.5))
+        else:
+            dynamic_prompts.append(types.WeightedPrompt(text="Sustained Chords", weight=0.4))
+        
+        # Brightness change prompts
+        current_brightness = analysis['brightness']
+        self.brightness_history.append(current_brightness)
+        if len(self.brightness_history) > 5:
+            self.brightness_history.pop(0)
+        
+        # Add lighting-based dynamic prompt
+        if len(set(self.brightness_history)) > 1:  # Brightness is changing
+            if current_brightness == "bright":
+                dynamic_prompts.append(types.WeightedPrompt(text="Bright Tones", weight=0.5))
+            elif current_brightness == "dark":
+                dynamic_prompts.append(types.WeightedPrompt(text="Subdued Melody", weight=0.5))
+        
+        # Object-based dynamic prompts
+        current_objects = [obj['name'] for obj in analysis.get('objects', [])]
+        if 'person' in current_objects:
+            dynamic_prompts.append(types.WeightedPrompt(text="Live Performance", weight=0.4))
+        
+        # Depth-based dynamic prompts
+        depth_info = analysis.get('depth', {})
+        if depth_info:
+            depth_profile = depth_info.get('depth_profile', 'medium')
+            if depth_profile in ['deep', 'deep_with_detail']:
+                dynamic_prompts.append(types.WeightedPrompt(text="Echo", weight=0.5))
+            elif depth_profile == 'shallow':
+                dynamic_prompts.append(types.WeightedPrompt(text="Crunchy Distortion", weight=0.4))
+        
+        return dynamic_prompts
 
-async def live_camera_processing():
+    async def generate_prompts(self, analysis: Dict, is_video: bool) -> Tuple[List[types.WeightedPrompt], Dict]:
+        """
+        Main method to generate prompts - handles both base prompt generation and dynamic updates
+        """
+        config_updates = {}
+        
+        # Phase 1: Collect initial data and generate base prompts (first 5 seconds)
+        if not self.base_prompts_generated:
+            collection_complete = self.collect_initial_analysis(analysis)
+            
+            if collection_complete:
+                print("5-second analysis complete. Generating base prompts with AI...")
+                aggregated_data = self.aggregate_analysis_data()
+                self.base_prompts = await self.generate_base_prompts_with_ai(aggregated_data)
+                self.base_prompts_generated = True
+                print(f"Base prompts established: {len(self.base_prompts)} prompts")
+                
+                # Initial config based on aggregated data
+                avg_motion = aggregated_data.get('avg_motion', 0.5)
+                config_updates['density'] = 0.4 + (avg_motion * 0.4)  # 0.4-0.8 range
+                
+                if aggregated_data.get('brightness') == "dark":
+                    config_updates['brightness'] = 0.4
+                elif aggregated_data.get('brightness') == "bright":
+                    config_updates['brightness'] = 0.8
+                else:
+                    config_updates['brightness'] = 0.6
+            
+            # During collection phase, return simple prompts
+            if not self.base_prompts_generated:
+                temp_prompts = [
+                    types.WeightedPrompt(text="Ambient", weight=0.8),
+                    types.WeightedPrompt(text="Chill", weight=0.6)
+                ]
+                return temp_prompts, config_updates
+        
+        # Phase 2: Live processing with base + dynamic prompts
+        all_prompts = []
+        
+        # Add stable base prompts (these never change, only weights might adjust slightly)
+        for base_prompt in self.base_prompts:
+            all_prompts.append(base_prompt)
+        
+        # Add dynamic prompts that respond to current conditions
+        dynamic_prompts = self.generate_dynamic_prompts(analysis)
+        all_prompts.extend(dynamic_prompts)
+        
+        # Update configuration based on current conditions
+        if is_video:
+            current_motion = analysis.get('motion', 0)
+            self.motion_window.append(current_motion)
+            if len(self.motion_window) > 10:
+                self.motion_window.pop(0)
+            
+            smoothed_motion = np.mean(self.motion_window)
+            
+            # Adjust density based on motion
+            base_density = 0.5
+            motion_adjustment = smoothed_motion * 0.3
+            config_updates['density'] = base_density + motion_adjustment
+            
+            # Adjust brightness based on current lighting
+            current_brightness = analysis.get('brightness', 'medium')
+            if current_brightness == "dark":
+                config_updates['brightness'] = 0.4
+            elif current_brightness == "bright":
+                config_updates['brightness'] = 0.8
+            else:
+                config_updates['brightness'] = 0.6
+        
+        self.current_dynamic_prompts = dynamic_prompts
+        return all_prompts, config_updates
+
+    def get_prompt_status(self) -> Dict:
+        """
+        Get current status of prompt generation
+        """
+        return {
+            'base_prompts_generated': self.base_prompts_generated,
+            'num_base_prompts': len(self.base_prompts),
+            'num_dynamic_prompts': len(self.current_dynamic_prompts),
+            'analysis_frames_collected': len(self.initial_analysis_data),
+            'collection_phase_complete': self.base_prompts_generated
+        }
+
+async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
     prompt_generator = EnhancedMusicGenerator()
-    prompt_smoother = PromptSmoother()
-    p = pyaudio.PyAudio()
     
     # Camera setup with timeout and retry
     cap = None
     for _ in range(3):  # Try 3 times to open camera
         try:
-            cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture('http://192.168.2.106:8080/video')
             if cap.isOpened():
                 break
         except Exception as e:
@@ -659,14 +779,13 @@ async def live_camera_processing():
     
     if not cap or not cap.isOpened():
         print("Error: Could not open camera after multiple attempts")
-        p.terminate()
         return
     
     try:
         async with client.aio.live.music.connect(model=MODEL) as session:
-            print("Connected to music session. Press 'q' to quit.")
+            print("Connected to music session. Starting initial 5-second analysis...")
             
-            # Initial configuration with verification
+            # Initial configuration
             config = types.LiveMusicGenerationConfig(
                 bpm=120,
                 scale=types.Scale.C_MAJOR_A_MINOR,
@@ -675,24 +794,15 @@ async def live_camera_processing():
                 guidance=6.0
             )
             await session.set_music_generation_config(config=config)
-            print("Configuration set successfully")
+            print("Initial configuration set")
             
-            # Start playback with verification
+            # Start playback
             await session.play()
-            print("Playback started successfully")
+            print("Playback started")
             
             async def receive_audio():
+                chunks_count = 0
                 try:
-                    output_stream = p.open(
-                        format=FORMAT,
-                        channels=CHANNELS,
-                        rate=OUTPUT_RATE,
-                        output=True,
-                        frames_per_buffer=CHUNK
-                    )
-                    print("Audio output stream opened successfully")
-                    
-                    chunks_count = 0
                     async for message in session.receive():
                         chunks_count += 1
                         if chunks_count == 1:
@@ -701,16 +811,12 @@ async def live_camera_processing():
                         
                         if message.server_content and message.server_content.audio_chunks:
                             audio_data = message.server_content.audio_chunks[0].data
-                            output_stream.write(audio_data)
-                            print(f"Received audio chunk {chunks_count}")  # Debug output
+                            await broadcast_func(audio_data)
                         elif message.filtered_prompt:
                             print("Filtered prompt:", message.filtered_prompt)
-                        await asyncio.sleep(0)  # Yield control
+                        await asyncio.sleep(0)
                 except Exception as e:
                     print(f"Error in audio receiver: {str(e)}")
-                finally:
-                    output_stream.close()
-                    print("Audio output stream closed")
             
             last_update_time = 0
             current_config = config
@@ -727,27 +833,41 @@ async def live_camera_processing():
                     analysis = media_analyzer.analyze_media(frame, is_video=True)
                     current_time = time.time()
                     
-                    if current_time - last_update_time > 3.0:
-                        new_prompts, config_updates = prompt_generator.generate_prompts(
+                    # Get prompt status
+                    status = prompt_generator.get_prompt_status()
+                    
+                    # Update prompts and config
+                    if not status['base_prompts_generated']:
+                        # During initial collection phase
+                        new_prompts, config_updates = await prompt_generator.generate_prompts(
                             analysis, is_video=True)
                         
-                        if config_updates:
-                            for key, value in config_updates.items():
-                                setattr(current_config, key, value)
-                            await session.set_music_generation_config(config=current_config)
-                            print("Updated config:", config_updates)
+                        print(f"Collection phase: {status['analysis_frames_collected']}/~150 frames")
                         
-                        prompt_smoother.update_target(new_prompts, current_time)
-                        last_update_time = current_time
+                    else:
+                        # During live processing phase
+                        if current_time - last_update_time > 2.0:  # Update every 2 seconds
+                            new_prompts, config_updates = await prompt_generator.generate_prompts(
+                                analysis, is_video=True)
+                            
+                            # Update configuration
+                            if config_updates:
+                                for key, value in config_updates.items():
+                                    setattr(current_config, key, value)
+                                await session.set_music_generation_config(config=current_config)
+                                print("Updated config:", config_updates)
+                            
+                            # Update prompts
+                            print(f"\n=== CURRENT PROMPTS (Base: {status['num_base_prompts']}, Dynamic: {status['num_dynamic_prompts']}) ===")
+                            for i, prompt in enumerate(new_prompts, 1):
+                                prompt_type = "BASE" if i <= status['num_base_prompts'] else "DYNAMIC"
+                                print(f"{i}. [{prompt_type}] {prompt.text} (weight: {prompt.weight:.2f})")
+                            
+                            await session.set_weighted_prompts(prompts=new_prompts)
+                            last_update_time = current_time
                     
-                    current_prompts = prompt_smoother.get_current_prompts(current_time)
-                    if current_prompts:
-                        print("\nCurrent prompts:")
-                        for i, prompt in enumerate(current_prompts, 1):
-                            print(f"{i}. {prompt.text} (weight: {prompt.weight:.2f})")
-                        await session.set_weighted_prompts(prompts=current_prompts)
-                    
-                    display_analysis(analysis, analysis['frame_resized'])
+                    # Display analysis
+                    display_analysis(analysis, analysis['frame_resized'], status)
                     
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
@@ -765,12 +885,14 @@ async def live_camera_processing():
     finally:
         cap.release()
         cv2.destroyAllWindows()
-        p.terminate()
         print("Resources cleaned up")
 
-def display_analysis(analysis, frame):
+def display_analysis(analysis, frame, status):
     object_names = ', '.join([obj['name'] for obj in analysis['objects']]) if analysis['objects'] else 'None'
+    depth_info = analysis.get('depth', {})
+    
     info = [
+        f"=== ANALYSIS ===",
         f"Scene 1: {analysis['top_scenes'][0][0]} ({analysis['top_scenes'][0][1]*100:.1f}%)",
         f"Scene 2: {analysis['top_scenes'][1][0]} ({analysis['top_scenes'][1][1]*100:.1f}%)",
         f"Scene 3: {analysis['top_scenes'][2][0]} ({analysis['top_scenes'][2][1]*100:.1f}%)",
@@ -778,50 +900,46 @@ def display_analysis(analysis, frame):
         f"Lighting: {analysis['brightness']}",
         f"Weather: {analysis['weather']}",
         f"Time: {analysis['time_of_day']}",
-        f"Motion: {analysis['motion']:.2f}",
-        f"Colors: {' '.join(analysis['colors'])}"
+        f"Motion: {analysis['motion']:.2f}" if 'motion' in analysis else "Photo (no motion)",
+        f"Colors: {' '.join(analysis['colors'])}",
+        f"Depth: {depth_info.get('depth_profile', 'N/A')}",
+        f"",
+        f"=== PROMPT STATUS ===",
+        f"Phase: {'COLLECTION' if not status['base_prompts_generated'] else 'LIVE PROCESSING'}",
+        f"Base Prompts: {status['num_base_prompts']}",
+        f"Dynamic Prompts: {status['num_dynamic_prompts']}",
+        f"Frames Collected: {status['analysis_frames_collected']}"
     ]
     
-    y = 30
+    y = 20
     for line in info:
-        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        y += 25
+        if line.startswith("==="):
+            color = (0, 255, 255)  # Yellow for headers
+        elif line.startswith("Phase:"):
+            color = (0, 255, 0) if status['base_prompts_generated'] else (0, 165, 255)  # Green/Orange
+        else:
+            color = (255, 255, 255)  # White for regular info
+            
+        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        y += 20
     
-    cv2.imshow("Media Analyzer", frame)
+    # Show depth map if available
+    if 'depth' in analysis and 'depth_map' in analysis['depth']:
+        depth_map = analysis['depth']['depth_map']
+        depth_map = (depth_map * 255).astype(np.uint8)
+        depth_map = cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
+        depth_map = cv2.resize(depth_map, (frame.shape[1] // 4, frame.shape[0] // 4))
+        
+        # Overlay depth map on the frame
+        frame[10:10+depth_map.shape[0], frame.shape[1]-depth_map.shape[1]-10:frame.shape[1]-10] = depth_map
+    
+    cv2.imshow("Enhanced Media Analyzer", frame)
     cv2.waitKey(1)
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate music from video or photos")
-    parser.add_argument("--video", type=str, help="Path to video file")
-    parser.add_argument("--photo", type=str, help="Path to single photo file")
-    parser.add_argument("--photo-dir", type=str, help="Directory containing photos to process")
-    parser.add_argument("--live", action="store_true", help="Use live camera feed")
-    
-    args = parser.parse_args()
-    
-    if args.video:
-        asyncio.run(process_media(args.video, is_video=True))
-    elif args.photo:
-        asyncio.run(process_media(args.photo, is_video=False))
-    elif args.photo_dir:
-        asyncio.run(batch_process_photos(args.photo_dir))
-    elif args.live:
-        asyncio.run(live_camera_processing())
-    else:
-        print("Please specify either --video, --photo, --photo-dir, or --live")
-
-async def process_upload(file_path: str, is_video: bool):
-    """Wrapper for your existing process_media function"""
-    try:
-        await process_media(file_path, is_video)
-        return {"status": "success"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-async def start_live_processing():
+async def start_live_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
     """Wrapper for live camera processing"""
     try:
-        await live_camera_processing()
+        await live_camera_processing(broadcast_func)
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
