@@ -9,6 +9,7 @@ venv/
 video2music/
 cache/
 
+
 # === IDE / Editor ===
 .vscode/
 .idea/
@@ -61,6 +62,7 @@ recordings/
 results/
 back/video2music
 frontend/node_modules
+back/media2music
 
 
 # === Secret or API Keys ===
