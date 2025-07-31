@@ -359,12 +359,7 @@ class EnhancedMusicGenerator:
             
             # Try different model names that are currently available
             model_names_to_try = [
-                'gemini-1.5-flash',
-                'gemini-1.5-pro', 
-                'gemini-1.0-pro',
-                'models/gemini-1.5-flash',
-                'models/gemini-1.5-pro',
-                'models/gemini-1.0-pro'
+                'gemini-2.5-flash',
             ]
             
             for model_name in model_names_to_try:
@@ -498,180 +493,78 @@ class EnhancedMusicGenerator:
             'total_frames': len(self.initial_analysis_data)
         }
 
-    async def generate_base_prompts_with_ai(self, aggregated_data: Dict) -> List[types.WeightedPrompt]:
-        """
-        Use AI to generate base prompts from aggregated analysis data
-        """
-        if not self.ai_client:
-            self.initialize_ai_client()
-            if not self.ai_client:
-                return self._fallback_base_prompts(aggregated_data)
-        
-        # Create detailed prompt for AI
-        ai_prompt = f"""
-Based on the following 5-second video analysis data, generate music prompts that would create an appropriate soundtrack. 
-
-Video Analysis Data:
-- Main Scenes: {', '.join([f"{scene} ({conf:.2f})" for scene, conf in aggregated_data['scenes'][:3]])}
-- Key Objects: {', '.join([f"{obj} ({conf:.2f})" for obj, conf in aggregated_data['objects'][:5]])}
-- Lighting: {aggregated_data['brightness']}
-- Weather: {aggregated_data['weather']}
-- Time of Day: {aggregated_data['time_of_day']}
-- Average Motion: {aggregated_data['avg_motion']:.2f} (0=static, 1=very dynamic)
-- Motion Variance: {aggregated_data['motion_variance']:.3f}
-- Dominant Colors: {', '.join([color for color, count in aggregated_data['dominant_colors'][:3]])}
-- Depth Profile: {aggregated_data['depth_profile']}
-- Average Depth: {aggregated_data['avg_depth']:.2f}
-
-Available Music Elements:
-GENRES: {', '.join(GENRES[:20])}... (and more)
-INSTRUMENTS: {', '.join(INSTRUMENTS[:20])}... (and more)  
-MOODS: {', '.join(MOODS[:20])}... (and more)
-
-Generate 4-6 base music prompts that would create a soundtrack matching this video content. Each prompt should be:
-1. One specific genre, instrument, or mood from the available options
-2. Appropriate for the analyzed content
-3. Weighted from 0.5 to 1.0 based on relevance
-
-Format your response as JSON:
-{{
-  "prompts": [
-    {{"text": "Jazz Fusion", "weight": 0.9, "reasoning": "Urban scene with moderate motion"}},
-    {{"text": "Rhodes Piano", "weight": 0.8, "reasoning": "Matches the indoor sophisticated setting"}},
-    ...
-  ]
-}}
-"""
-
-        try:
-            # Use the correct Gemini API syntax
-            response = self.ai_client.generate_content(ai_prompt)
-            response_text = response.text.strip()
-            
-            # Parse AI response
-            if response_text.startswith('```json'):
-                response_text = response_text[7:-3]
-            elif response_text.startswith('```'):
-                response_text = response_text[3:-3]
-                
-            ai_result = json.loads(response_text)
-            
-            base_prompts = []
-            for prompt_data in ai_result.get('prompts', []):
-                text = prompt_data['text']
-                weight = float(prompt_data['weight'])
-                
-                # Validate that the prompt text exists in our available options
-                if (text in GENRES or text in INSTRUMENTS or text in MOODS):
-                    base_prompts.append(types.WeightedPrompt(text=text, weight=weight))
-                    print(f"AI Base Prompt: {text} (weight: {weight:.2f}) - {prompt_data.get('reasoning', '')}")
-            
-            if len(base_prompts) >= 3:
-                print(f"Successfully generated {len(base_prompts)} base prompts with AI")
-                return base_prompts
-            else:
-                print("AI generated insufficient valid prompts, using fallback")
-                return self._fallback_base_prompts(aggregated_data)
-                
-        except Exception as e:
-            print(f"AI prompt generation failed: {e}")
-            return self._fallback_base_prompts(aggregated_data)
-
-    def _fallback_base_prompts(self, aggregated_data: Dict) -> List[types.WeightedPrompt]:
-        """
-        Fallback method to generate base prompts without AI
-        """
-        print("Using fallback base prompt generation")
-        
-        base_prompts = []
-        
-        # Genre based on scene and motion
-        primary_scene = aggregated_data['scenes'][0][0] if aggregated_data['scenes'] else "room"
-        motion_level = aggregated_data['avg_motion']
-        
-        if motion_level > 0.3:
-            if "street" in primary_scene or "road" in primary_scene:
-                base_prompts.append(types.WeightedPrompt(text="Electronic", weight=0.9))
-            elif "park" in primary_scene or "outdoor" in primary_scene:
-                base_prompts.append(types.WeightedPrompt(text="Indie Folk", weight=0.8))
-            else:
-                base_prompts.append(types.WeightedPrompt(text="Contemporary R&B", weight=0.8))
-        else:
-            if "room" in primary_scene or "indoor" in primary_scene:
-                base_prompts.append(types.WeightedPrompt(text="Lo-Fi Hip Hop", weight=0.9))
-            else:
-                base_prompts.append(types.WeightedPrompt(text="Ambient", weight=0.8))
-        
-        # Instrument based on objects and environment
-        key_objects = [obj[0] for obj in aggregated_data['objects'][:3]]
-        if any("person" in obj for obj in key_objects):
-            base_prompts.append(types.WeightedPrompt(text="Warm Acoustic Guitar", weight=0.8))
-        if any("car" in obj or "vehicle" in obj for obj in key_objects):
-            base_prompts.append(types.WeightedPrompt(text="Synth Pads", weight=0.7))
-        
-        # Mood based on lighting and depth
-        if aggregated_data['brightness'] == "bright":
-            base_prompts.append(types.WeightedPrompt(text="Upbeat", weight=0.8))
-        elif aggregated_data['brightness'] == "dark":
-            base_prompts.append(types.WeightedPrompt(text="Dreamy", weight=0.8))
-        else:
-            base_prompts.append(types.WeightedPrompt(text="Chill", weight=0.7))
-        
-        # Add depth-based prompt
-        if aggregated_data['depth_profile'] in ['deep', 'deep_with_detail']:
-            base_prompts.append(types.WeightedPrompt(text="Ethereal Ambience", weight=0.7))
-        
-        return base_prompts[:6]  # Limit to 6 base prompts
-
     def generate_dynamic_prompts(self, analysis: Dict) -> List[types.WeightedPrompt]:
-        """
-        Generate dynamic prompts that change based on current conditions
-        These complement the stable base prompts
-        """
+        """Generate dynamic prompts including depth-based reverb effects"""
         dynamic_prompts = []
         
-        # Motion-based dynamic prompts
-        current_motion = analysis.get('motion', 0)
-        self.motion_window.append(current_motion)
-        if len(self.motion_window) > 10:
-            self.motion_window.pop(0)
-        
-        smoothed_motion = np.mean(self.motion_window)
-        
-        # Motion intensity prompts
-        if smoothed_motion > 0.4:
-            dynamic_prompts.append(types.WeightedPrompt(text="Fat Beats", weight=0.6))
-        elif smoothed_motion > 0.2:
-            dynamic_prompts.append(types.WeightedPrompt(text="Tight Groove", weight=0.5))
-        else:
-            dynamic_prompts.append(types.WeightedPrompt(text="Sustained Chords", weight=0.4))
-        
-        # Brightness change prompts
-        current_brightness = analysis['brightness']
-        self.brightness_history.append(current_brightness)
-        if len(self.brightness_history) > 5:
-            self.brightness_history.pop(0)
-        
-        # Add lighting-based dynamic prompt
-        if len(set(self.brightness_history)) > 1:  # Brightness is changing
-            if current_brightness == "bright":
-                dynamic_prompts.append(types.WeightedPrompt(text="Bright Tones", weight=0.5))
-            elif current_brightness == "dark":
-                dynamic_prompts.append(types.WeightedPrompt(text="Subdued Melody", weight=0.5))
-        
-        # Object-based dynamic prompts
-        current_objects = [obj['name'] for obj in analysis.get('objects', [])]
-        if 'person' in current_objects:
-            dynamic_prompts.append(types.WeightedPrompt(text="Live Performance", weight=0.4))
-        
-        # Depth-based dynamic prompts
+        # Extract depth information
         depth_info = analysis.get('depth', {})
-        if depth_info:
-            depth_profile = depth_info.get('depth_profile', 'medium')
-            if depth_profile in ['deep', 'deep_with_detail']:
-                dynamic_prompts.append(types.WeightedPrompt(text="Echo", weight=0.5))
-            elif depth_profile == 'shallow':
-                dynamic_prompts.append(types.WeightedPrompt(text="Crunchy Distortion", weight=0.4))
+        depth_profile = depth_info.get('depth_profile', 'medium')
+        avg_depth = depth_info.get('avg_depth', 0.5)
+        
+        # Map depth characteristics to reverb settings
+        reverb_weight = 0.0
+        if depth_profile == 'deep' or depth_profile == 'deep_with_detail':
+            reverb_weight = 3.0  # Strong reverb for deep scenes
+        elif depth_profile == 'medium' or depth_profile == 'medium_with_detail':
+            reverb_weight = 2.0  # Medium reverb
+        elif depth_profile == 'shallow' or depth_profile == 'shallow_with_detail':
+            reverb_weight = 1.0  # Light reverb
+        else:  # flat or default
+            reverb_weight = 0.5  # Minimal reverb
+
+        # Add reverb prompt with weight based on depth
+        dynamic_prompts.append(
+            types.WeightedPrompt(
+                text="reverb",
+                weight=min(5.0, reverb_weight * (1 + avg_depth))
+            )
+        )
+        
+        # Create original scene context and prompts
+        scene_desc = " ".join([scene for scene, _ in analysis['top_scenes'][:2]])
+        object_desc = " ".join([obj['name'] for obj in analysis['objects'][:3]])
+        env_desc = f"{analysis['brightness']} {analysis['weather']} {analysis['time_of_day']}"
+        scene_context = f"{scene_desc} {object_desc} {env_desc}"
+
+        # Add motion context if available
+        if 'motion' in analysis:
+            motion_desc = "high energy movement" if analysis['motion'] > 0.3 else "calm static"
+            scene_context += f" {motion_desc}"
+
+        # Convert scene context to embedding
+        context_emb = model_st.encode(scene_context, convert_to_tensor=True).to(device)
+        
+        # Find matching instruments and moods (keeping original logic)
+        instrument_scores = util.pytorch_cos_sim(context_emb, instrument_embs)[0]
+        top_instrument_idx = torch.topk(instrument_scores, k=3).indices
+        
+        mood_scores = util.pytorch_cos_sim(context_emb, mood_embs)[0]
+        top_mood_idx = torch.topk(mood_scores, k=2).indices
+        
+        # Add instruments and moods with weights
+        for idx in top_instrument_idx:
+            similarity = float(instrument_scores[idx])
+            weight = 0.5 + (similarity * 1.5)
+            dynamic_prompts.append(
+                types.WeightedPrompt(
+                    text=INSTRUMENTS[idx],
+                    weight=weight
+                )
+            )
+        
+        for idx in top_mood_idx:
+            similarity = float(mood_scores[idx])
+            weight = 0.5 + (similarity * 1.5)
+            dynamic_prompts.append(
+                types.WeightedPrompt(
+                    text=MOODS[idx],
+                    weight=weight
+                )
+            )
+        
+        # Track prompts for monitoring
+        self.current_dynamic_prompts = dynamic_prompts
         
         return dynamic_prompts
 
@@ -686,11 +579,24 @@ Format your response as JSON:
             collection_complete = self.collect_initial_analysis(analysis)
             
             if collection_complete:
-                print("5-second analysis complete. Generating base prompts with AI...")
+                print("5-second analysis complete. Generating base configuration and prompts...")
                 aggregated_data = self.aggregate_analysis_data()
-                self.base_prompts = await self.generate_base_prompts_with_ai(aggregated_data)
+                print(f"Aggregated data: {aggregated_data}")
+                
+                # Generate both config and base prompts
+                initial_config, self.base_prompts = await self.generate_base_config_and_prompts(aggregated_data)
                 self.base_prompts_generated = True
-                print(f"Base prompts established: {len(self.base_prompts)} prompts")
+                
+                # Set initial configuration
+                config_updates = {
+                    'bpm': initial_config.bpm,
+                    'scale': initial_config.scale,
+                    'density': initial_config.density,
+                    'brightness': initial_config.brightness,
+                    'guidance': initial_config.guidance
+                }
+                
+                print(f"Base configuration and prompts established: {len(self.base_prompts)} prompts")
                 
                 # Initial config based on aggregated data
                 avg_motion = aggregated_data.get('avg_motion', 0.5)
@@ -739,11 +645,11 @@ Format your response as JSON:
             # Adjust brightness based on current lighting
             current_brightness = analysis.get('brightness', 'medium')
             if current_brightness == "dark":
-                config_updates['brightness'] = 0.4
+                config_updates['brightness'] = 1.4
             elif current_brightness == "bright":
-                config_updates['brightness'] = 0.8
+                config_updates['brightness'] = 1.8
             else:
-                config_updates['brightness'] = 0.6
+                config_updates['brightness'] =1.6
         
         self.current_dynamic_prompts = dynamic_prompts
         return all_prompts, config_updates
@@ -759,6 +665,128 @@ Format your response as JSON:
             'analysis_frames_collected': len(self.initial_analysis_data),
             'collection_phase_complete': self.base_prompts_generated
         }
+
+    async def generate_base_config_and_prompts(self, aggregated_data: Dict) -> Tuple[types.LiveMusicGenerationConfig, List[types.WeightedPrompt]]:
+        """Generate both initial configuration and base prompts using a single AI prompt"""
+        if not self.ai_client:
+            self.initialize_ai_client()
+            if not self.ai_client:
+                return self._fallback_base_config(aggregated_data), self._fallback_base_prompts(aggregated_data)
+        
+        # Prepare available options context
+        instruments_context = "choose from these instruments: " + ", ".join(INSTRUMENTS) 
+        genres_context = "choose from these genres : " + ", ".join(GENRES) 
+        moods_context = "choose from these moods : " + ", ".join(MOODS) 
+        
+        ai_prompt = f"""
+Based on this video scene analysis, generate both music configuration and prompts for adaptive music generation.
+
+Scene Analysis:
+- Main Scenes: {', '.join([f"{scene} ({conf:.2f})" for scene, conf in aggregated_data['scenes'][:3]])}
+- Key Objects: {', '.join([f"{obj} ({conf:.2f})" for obj, conf in aggregated_data['objects'][:5]])}
+- Environment: {aggregated_data['brightness']} lighting, {aggregated_data['weather']}, {aggregated_data['time_of_day']}
+- Motion Level: {aggregated_data['avg_motion']:.2f} (0=static, 1=dynamic)
+- Motion Variance: {aggregated_data['motion_variance']:.3f}
+- Depth Profile: {aggregated_data['depth_profile']}
+- Colors: {', '.join([color for color, _ in aggregated_data['dominant_colors'][:3]])}
+
+Available Scales:
+- C_MAJOR_A_MINOR
+- D_FLAT_MAJOR_B_FLAT_MINOR
+- D_MAJOR_B_MINOR
+- E_FLAT_MAJOR_C_MINOR
+- E_MAJOR_D_FLAT_MINOR
+- F_MAJOR_D_MINOR
+- G_FLAT_MAJOR_E_FLAT_MINOR
+- G_MAJOR_E_MINOR
+- A_FLAT_MAJOR_F_MINOR
+- A_MAJOR_G_FLAT_MINOR
+- B_FLAT_MAJOR_G_MINOR
+- B_MAJOR_A_FLAT_MINOR
+
+{instruments_context}
+{genres_context}
+{moods_context}
+
+Generate both configuration and prompts in this JSON format:
+{{
+    "config": {{
+        "bpm": <60-200>,
+        "scale": "<one of the scales above>",
+        "density": <0.0-1.0>,
+        "brightness": <0.0-1.0>,
+        "guidance": <1.0-6.0>
+    }},
+    "prompts": [
+        {{"text": "<instrument/genre/mood>", "weight": <0.5-5.0>, "type": "<instrument|genre|mood>"}}
+    ]
+}}
+
+Configuration guidelines:
+- BPM: 60-90 for calm scenes, 120-180 for dynamic scenes
+- Scale: Choose based on scene mood (e.g., major scales for bright/positive scenes, minor for dark/moody scenes)
+- Density: Higher for busy scenes (0.6-1.0), lower for minimal scenes (0.2-0.5)
+- Brightness: Match scene lighting (1.2-1.4 for dark, 1.6-1.8 for bright)
+- Guidance: 3.0-6.0 (higher for more consistent output)
+
+Prompt guidelines:
+- Include 4-6 total prompts mixing instruments, genres(one fixed), and moods
+- Higher weights (2.0-5.0) for primary elements
+- Medium weights (1.0-2.0) for supporting elements
+- Lower weights (0.5-1.0) for subtle influences
+"""
+
+
+
+        try:
+            response = self.ai_client.generate_content(ai_prompt)
+            response_text = response.text.strip()
+            
+            # Clean up response text
+            if response_text.startswith('```json'):
+                response_text = response_text[7:-3]
+            elif response_text.startswith('```'):
+                response_text = response_text[3:-3]
+                
+            result = json.loads(response_text)
+            print("AI Response:", result)
+            
+            # Process configuration
+            config_data = result.get('config', {})
+            config = types.LiveMusicGenerationConfig(
+                bpm=min(max(60, config_data['bpm']), 200),  # Remove default 120
+                scale=getattr(types.Scale, config_data['scale']),  # Remove default
+                density=min(max(0.0, config_data['density']), 1.0),  # Remove default 0.6
+                brightness=min(max(0.0, config_data['brightness']), 1.0),  # Remove default 0.6
+                guidance=min(max(1.0, config_data['guidance']), 6.0)  # Remove default 4.0
+            )
+            
+            # Process prompts
+            base_prompts = []
+            base_prompts.append(types.WeightedPrompt(text="sub kick", weight=4.0))
+            for prompt_data in result.get('prompts', []):
+                text = prompt_data['text']
+                weight = float(prompt_data['weight'])
+                prompt_type = prompt_data.get('type', 'unknown')
+                
+                # Validate prompt against available options
+                if (prompt_type == 'instrument' and text in INSTRUMENTS) or \
+                   (prompt_type == 'genre' and text in GENRES) or \
+                   (prompt_type == 'mood' and text in MOODS) or \
+                   prompt_type == 'unknown':
+                    base_prompts.append(types.WeightedPrompt(text=text, weight=weight))
+                    print(f"Added {prompt_type} prompt: {text} (weight: {weight:.2f})")
+            
+            if base_prompts:
+                print(f"Successfully generated configuration and {len(base_prompts)} prompts")
+                return config, base_prompts
+            else:
+                print("No valid prompts generated, using fallback")
+                return config, self._fallback_base_prompts(aggregated_data)
+                
+        except Exception as e:
+            print(f"Error generating config and prompts: {e}")
+            return self._fallback_base_config(aggregated_data), self._fallback_base_prompts(aggregated_data)
 
 async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
@@ -846,7 +874,7 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                         
                     else:
                         # During live processing phase
-                        if current_time - last_update_time > 2.0:  # Update every 2 seconds
+                        if current_time - last_update_time > 4.0:  # Update every 2 seconds
                             new_prompts, config_updates = await prompt_generator.generate_prompts(
                                 analysis, is_video=True)
                             
