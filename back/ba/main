@@ -1,0 +1,321 @@
+#main.py
+from fastapi import FastAPI, UploadFile, File, Request, WebSocket
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+import os
+import uuid
+import asyncio
+from pathlib import Path
+# from final import process_upload, start_live_processing
+from final import start_live_processing
+import cv2
+import time
+from typing import Dict
+import base64
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import WebSocketDisconnect
+import numpy as np
+import asyncio
+from queue import Queue
+from PIL import Image
+import io
+
+
+# Add these global variables
+video_connections: Dict[str, WebSocket] = {}
+
+# Add to startup
+
+
+app = FastAPI()
+
+# Setup CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Setup static files and templates
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="static")
+
+# Create uploads directory if not exists
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# WebSocket connections management
+active_connections: Dict[str, WebSocket] = {}
+
+class VideoFrameProcessor:
+    def __init__(self, broadcast_func):
+        self.broadcast_func = broadcast_func
+        self.media_analyzer = None
+        self.prompt_generator = None
+        self.session = None
+        self.is_processing = False
+        self.last_update_time = 0
+        self.config = None
+        
+    async def initialize_session(self):
+        """Initialize the music generation session"""
+        try:
+            from final import MediaAnalyzer, EnhancedMusicGenerator
+            from google import genai
+            from google.genai import types
+            
+            # Initialize analyzers
+            self.media_analyzer = MediaAnalyzer()
+            self.prompt_generator = EnhancedMusicGenerator()
+            
+            # Initialize AI session
+            api_key = os.environ.get("LYRIA_API_KEY") or os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                print("Warning: No LYRIA_API_KEY found, using fallback mode")
+                return
+                
+            client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+            self.session = await client.aio.live.music.connect(model='models/lyria-realtime-exp').__aenter__()
+            
+            # Set initial config
+            self.config = types.LiveMusicGenerationConfig(
+                bpm=120,
+                scale=types.Scale.C_MAJOR_A_MINOR,
+                brightness=1.6,
+                density=0.6,
+                guidance=5.0
+            )
+            await self.session.set_music_generation_config(config=self.config)
+            await self.session.play()
+            
+            # Start audio receiver
+            asyncio.create_task(self._receive_audio())
+            self.is_processing = True
+            print("Music session initialized successfully")
+            
+        except Exception as e:
+            print(f"Error initializing session: {e}")
+            self.is_processing = False
+            
+    async def process_frame(self, frame_data: bytes):
+        """Process incoming video frame"""
+        try:
+            if not self.is_processing:
+                await self.initialize_session()
+                
+            if not self.media_analyzer:
+                print("Media analyzer not ready")
+                return
+                
+            # Convert bytes to OpenCV image
+            image = Image.open(io.BytesIO(frame_data))
+            frame = np.array(image)
+            if frame.shape[2] == 3:  # RGB
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            elif frame.shape[2] == 4:  # RGBA
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+            
+            print(f"Processing frame: {frame.shape}")
+            
+            # Analyze frame
+            analysis = self.media_analyzer.analyze_video_frame(frame)
+            
+            # Generate prompts (limit updates to every 4 seconds)
+            current_time = time.time()
+            if current_time - self.last_update_time > 4.0:
+                all_prompts, config_updates = await self.prompt_generator.generate_prompts(
+                    analysis, is_video=True
+                )
+                
+                # Update session if available
+                if self.session and config_updates:
+                    for key, value in config_updates.items():
+                        if hasattr(self.config, key):
+                            setattr(self.config, key, value)
+                    await self.session.set_music_generation_config(config=self.config)
+                    print("Updated config:", config_updates)
+                    
+                if self.session and all_prompts:
+                    await self.session.set_weighted_prompts(prompts=all_prompts)
+                    print(f"Updated prompts: {len(all_prompts)} total")
+                
+                self.last_update_time = current_time
+                
+        except Exception as e:
+            print(f"Error processing frame: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _receive_audio(self):
+        """Receive and broadcast audio from the session"""
+        try:
+            async for message in self.session.receive():
+                if message.server_content and message.server_content.audio_chunks:
+                    audio_data = message.server_content.audio_chunks[0].data
+                    await self.broadcast_func(audio_data)
+        except Exception as e:
+            print(f"Error receiving audio: {e}")
+    
+    def cleanup(self):
+        """Clean up resources"""
+        self.is_processing = False
+        if self.session:
+            asyncio.create_task(self._cleanup_session())
+    
+    async def _cleanup_session(self):
+        try:
+            await self.session.__aexit__(None, None, None)
+        except:
+            pass
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.on_event("startup")
+async def startup_event():
+    app.state.video_frame_queue = asyncio.Queue(maxsize=10)
+
+
+video_processors: Dict[str, VideoFrameProcessor] = {}
+
+# Add this new WebSocket endpoint
+@app.websocket("/ws/video")
+async def websocket_video(websocket: WebSocket):
+    await websocket.accept()
+    connection_id = str(uuid.uuid4())
+    
+    # Create video processor for this connection
+    video_processor = VideoFrameProcessor(broadcast_audio)
+    video_processors[connection_id] = video_processor
+    
+    print(f"Video client {connection_id} connected")
+    
+    try:
+        while True:
+            try:
+                message = await asyncio.wait_for(websocket.receive(), timeout=30.0)
+                
+                if message['type'] == 'websocket.receive':
+                    if 'bytes' in message:
+                        print(f"Received frame from {connection_id}, size: {len(message['bytes'])}")
+                        await video_processor.process_frame(message['bytes'])
+                    elif 'text' in message:
+                        data = message['text']
+                        if data == "ping":
+                            await websocket.send_text("pong")
+                        
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_text("ping")
+                except:
+                    break
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"Video WebSocket error: {e}")
+                break
+                
+    except Exception as e:
+        print(f"Video WebSocket connection error: {e}")
+    finally:
+        # Cleanup
+        print(f"Video client {connection_id} disconnecting")
+        video_processor.cleanup()
+        video_processors.pop(connection_id, None)
+
+@app.post("/upload")
+async def handle_upload(file: UploadFile = File(...)):
+    # Save uploaded file
+    file_ext = Path(file.filename).suffix
+    file_id = str(uuid.uuid4())
+    file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
+    
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+    
+    # Determine if it's video or image
+    is_video = file.content_type.startswith("video/")
+    
+    # Process in background
+    asyncio.create_task(process_upload(file_path, is_video, broadcast_audio))
+    return {"message": "Processing started - audio will stream to connected clients"}
+
+@app.post("/start-live")
+async def handle_start_live():
+    # Just confirm readiness - actual processing starts when video frames arrive
+    return {"message": "Ready to receive video frames via WebSocket"}
+
+@app.websocket("/ws/audio")
+async def websocket_audio(websocket: WebSocket):
+    await websocket.accept()
+    connection_id = str(uuid.uuid4())
+    active_connections[connection_id] = websocket
+    try:
+        while True:
+            # Try to receive a message to keep connection alive
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # Handle ping/pong if needed
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # Send ping to keep connection alive
+                try:
+                    await websocket.send_text("ping")
+                except:
+                    break  # Connection is dead
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"WebSocket receive error: {e}")
+                break
+    except Exception as e:
+        print(f"WebSocket connection error: {e}")
+    finally:
+        active_connections.pop(connection_id, None)
+        print(f"Client {connection_id} disconnected")
+
+async def broadcast_audio(audio_data: bytes):
+    if not active_connections:
+        return
+        
+    # Ensure the audio data is in the correct format
+    if not isinstance(audio_data, bytes):
+        audio_data = bytes(audio_data)
+    
+    # Add WAV header if needed (example for 16-bit 44.1kHz stereo)
+    if len(audio_data) > 0:
+        # Simple WAV header for raw PCM data
+        header = bytearray()
+        header.extend(b'RIFF')
+        header.extend((len(audio_data) + 36).to_bytes(4, byteorder='little'))  # File size
+        header.extend(b'WAVEfmt ')
+        header.extend((16).to_bytes(4, byteorder='little'))  # Subchunk size
+        header.extend((1).to_bytes(2, byteorder='little'))   # Audio format (PCM)
+        header.extend((2).to_bytes(2, byteorder='little'))   # Channels
+        header.extend((44100).to_bytes(4, byteorder='little'))  # Sample rate
+        header.extend((176400).to_bytes(4, byteorder='little'))  # Byte rate
+        header.extend((4).to_bytes(2, byteorder='little'))    # Block align
+        header.extend((16).to_bytes(2, byteorder='little'))   # Bits per sample
+        header.extend(b'data')
+        header.extend(len(audio_data).to_bytes(4, byteorder='little'))
+        
+        full_audio = bytes(header) + audio_data
+    else:
+        full_audio = audio_data
+    
+    # Send to all active connections
+    for connection_id, websocket in list(active_connections.items()):
+        try:
+            await websocket.send_bytes(full_audio)
+        except Exception as e:
+            print(f"Error broadcasting to {connection_id}: {e}")
+            try:
+                await websocket.close()
+            except:
+                pass
+            active_connections.pop(connection_id, None)

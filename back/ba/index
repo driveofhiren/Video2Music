@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Video2Music Converter</title>
+		<style>
+			:root {
+				--primary-color: #4a00e0;
+				--secondary-color: #8e2de2;
+				--success-color: #2e7d32;
+				--error-color: #c62828;
+				--background-color: #f5f5f5;
+				--card-bg: #ffffff;
+				--text-color: #333333;
+				--text-light: #666666;
+			}
+
+			body {
+				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+				max-width: 900px;
+				margin: 0 auto;
+				padding: 20px;
+				background-color: var(--background-color);
+				color: var(--text-color);
+				line-height: 1.6;
+			}
+
+			.container {
+				display: flex;
+				flex-direction: column;
+				gap: 25px;
+			}
+
+			.card {
+				border-radius: 10px;
+				padding: 25px;
+				background-color: var(--card-bg);
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+				transition: transform 0.3s ease, box-shadow 0.3s ease;
+			}
+
+			.card:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+			}
+
+			h1,
+			h2 {
+				color: var(--primary-color);
+				margin-bottom: 15px;
+			}
+
+			h1 {
+				font-size: 2.2rem;
+				text-align: center;
+				background: linear-gradient(
+					to right,
+					var(--primary-color),
+					var(--secondary-color)
+				);
+				-webkit-background-clip: text;
+				background-clip: text;
+				color: transparent;
+			}
+
+			h2 {
+				font-size: 1.5rem;
+				border-bottom: 2px solid var(--secondary-color);
+				padding-bottom: 8px;
+			}
+
+			button {
+				padding: 12px 20px;
+				background: linear-gradient(
+					to right,
+					var(--primary-color),
+					var(--secondary-color)
+				);
+				color: white;
+				border: none;
+				border-radius: 6px;
+				font-size: 16px;
+				font-weight: 500;
+				cursor: pointer;
+				transition: all 0.3s ease;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
+
+			button:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+			}
+
+			button:disabled {
+				background: #cccccc;
+				transform: none;
+				box-shadow: none;
+				cursor: not-allowed;
+			}
+
+			.status {
+				margin-top: 15px;
+				padding: 12px;
+				border-radius: 6px;
+				font-size: 14px;
+				border-left: 4px solid;
+			}
+
+			.status.connected {
+				background-color: rgba(46, 125, 50, 0.1);
+				border-color: var(--success-color);
+				color: var(--success-color);
+			}
+
+			.status.error {
+				background-color: rgba(198, 40, 40, 0.1);
+				border-color: var(--error-color);
+				color: var(--error-color);
+			}
+
+			.status.processing {
+				background-color: rgba(74, 0, 224, 0.1);
+				border-color: var(--primary-color);
+				color: var(--primary-color);
+			}
+
+			.media-preview {
+				width: 100%;
+				max-height: 400px;
+				margin-top: 20px;
+				border-radius: 8px;
+				background-color: #000;
+				display: none;
+			}
+
+			.audio-container {
+				margin-top: 20px;
+			}
+
+			#audioVisualizer {
+				width: 100%;
+				height: 120px;
+				background: linear-gradient(to bottom, #f8f8f8, #e8e8e8);
+				margin-top: 15px;
+				border-radius: 8px;
+				overflow: hidden;
+			}
+
+			.file-input-container {
+				margin-bottom: 20px;
+			}
+
+			.file-input-label {
+				display: block;
+				margin-bottom: 8px;
+				font-weight: 500;
+				color: var(--text-light);
+			}
+
+			input[type='file'] {
+				width: 100%;
+				padding: 10px;
+				border: 1px solid #ddd;
+				border-radius: 6px;
+				background-color: #f9f9f9;
+			}
+
+			.progress-container {
+				width: 100%;
+				background-color: #f1f1f1;
+				border-radius: 6px;
+				margin-top: 15px;
+				overflow: hidden;
+				display: none;
+			}
+
+			.progress-bar {
+				height: 10px;
+				background: linear-gradient(
+					to right,
+					var(--primary-color),
+					var(--secondary-color)
+				);
+				width: 0%;
+				transition: width 0.3s ease;
+			}
+
+			@media (max-width: 768px) {
+				body {
+					padding: 15px;
+				}
+
+				.card {
+					padding: 20px;
+				}
+
+				h1 {
+					font-size: 1.8rem;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<h1>Video2Music Converter</h1>
+
+			<div class="card">
+				<h2>Upload Media</h2>
+				<form id="uploadForm" enctype="multipart/form-data">
+					<div class="file-input-container">
+						<label class="file-input-label" for="fileInput"
+							>Select media file (image or video):</label
+						>
+						<input
+							type="file"
+							name="file"
+							id="fileInput"
+							accept="image/*,video/*"
+							required
+						/>
+					</div>
+					<button type="submit" id="uploadBtn">Process Media</button>
+					<div class="progress-container" id="uploadProgress">
+						<div class="progress-bar" id="progressBar"></div>
+					</div>
+					<div class="status" id="uploadStatus"></div>
+				</form>
+				<video id="videoPreview" class="media-preview" controls></video>
+				<img
+					id="imagePreview"
+					class="media-preview"
+					alt="Image preview"
+				/>
+			</div>
+
+			<div class="card">
+				<h2>Live Processing</h2>
+				<button id="liveBtn">Start Live Camera Processing</button>
+				<div class="status" id="liveStatus"></div>
+			</div>
+
+			<!-- Add to the Live Processing card -->
+			<div class="card">
+				<h2>Live Processing</h2>
+				<video
+					id="localVideo"
+					width="320"
+					height="240"
+					autoplay
+					muted
+					style="border: 1px solid #ccc; margin-bottom: 10px"
+				></video>
+				<br />
+				<button id="liveBtn">Start Live Camera Processing</button>
+				<div class="status" id="liveStatus"></div>
+			</div>
+
+			<div class="card audio-container">
+				<h2>Audio Output</h2>
+				<audio id="audioPlayer" controls></audio>
+				<div id="audioVisualizer"></div>
+				<div class="status" id="connectionStatus">
+					Connecting to audio stream...
+				</div>
+			</div>
+		</div>
+
+		<script>
+			// DOM Elements
+			const audioPlayer = document.getElementById('audioPlayer')
+			const connectionStatus = document.getElementById('connectionStatus')
+			const uploadStatus = document.getElementById('uploadStatus')
+			const liveStatus = document.getElementById('liveStatus')
+			const uploadBtn = document.getElementById('uploadBtn')
+			const liveBtn = document.getElementById('liveBtn')
+			const videoPreview = document.getElementById('videoPreview')
+			const imagePreview = document.getElementById('imagePreview')
+			const fileInput = document.getElementById('fileInput')
+			const audioVisualizer = document.getElementById('audioVisualizer')
+			const uploadProgress = document.getElementById('uploadProgress')
+			const progressBar = document.getElementById('progressBar')
+
+			let localVideo
+			let mediaStream
+			let videoWs
+			let frameInterval
+
+			// Audio variables
+			let audioContext
+			let analyser
+			let audioSource
+			let visualizationInterval
+			let ws
+			let reconnectAttempts = 0
+			const maxReconnectAttempts = 5
+			let keepAliveInterval
+			const sampleRate = 44100 // Default sample rate
+
+			async function initCamera() {
+				try {
+					localVideo = document.getElementById('localVideo')
+					mediaStream = await navigator.mediaDevices.getUserMedia({
+						video: { width: 640, height: 480 },
+						audio: false,
+					})
+					localVideo.srcObject = mediaStream
+					return true
+				} catch (error) {
+					console.error('Error accessing camera:', error)
+					updateStatus(liveStatus, 'Camera access denied', 'error')
+					return false
+				}
+			}
+
+			// Send video frames to backend
+			function startVideoStream() {
+				const protocol =
+					window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+				const host = window.location.host
+				videoWs = new WebSocket(`${protocol}//${host}/ws/video`)
+
+				videoWs.onopen = () => {
+					console.log('Video WebSocket connected')
+
+					// Capture and send frames every 100ms
+					frameInterval = setInterval(() => {
+						if (localVideo && localVideo.videoWidth > 0) {
+							const canvas = document.createElement('canvas')
+							canvas.width = 640
+							canvas.height = 480
+							const ctx = canvas.getContext('2d')
+							ctx.drawImage(
+								localVideo,
+								0,
+								0,
+								canvas.width,
+								canvas.height
+							)
+
+							canvas.toBlob(
+								(blob) => {
+									if (
+										blob &&
+										videoWs.readyState === WebSocket.OPEN
+									) {
+										videoWs.send(blob)
+									}
+								},
+								'image/jpeg',
+								0.8
+							)
+						}
+					}, 100) // Send 10 frames per second
+				}
+
+				videoWs.onerror = (error) => {
+					console.error('Video WebSocket error:', error)
+				}
+
+				videoWs.onclose = () => {
+					console.log('Video WebSocket closed')
+					if (frameInterval) {
+						clearInterval(frameInterval)
+					}
+				}
+			}
+
+			// Update the live button click handler
+			liveBtn.addEventListener('click', async () => {
+				liveBtn.disabled = true
+				updateStatus(liveStatus, 'Starting camera...', 'processing')
+
+				try {
+					const cameraReady = await initCamera()
+					if (!cameraReady) {
+						throw new Error('Failed to access camera')
+					}
+
+					// Start video streaming
+					startVideoStream()
+
+					// Start live processing
+					const response = await fetch('/start-live', {
+						method: 'POST',
+					})
+
+					if (!response.ok) {
+						throw new Error(
+							(await response.text()) || 'Failed to start'
+						)
+					}
+
+					const result = await response.json()
+					updateStatus(
+						liveStatus,
+						result.message || 'Live processing started',
+						'connected'
+					)
+				} catch (error) {
+					console.error('Live processing error:', error)
+					updateStatus(
+						liveStatus,
+						error.message || 'Failed to start',
+						'error'
+					)
+				} finally {
+					liveBtn.disabled = false
+				}
+			})
+
+			// Initialize Web Audio API
+			function initAudioContext() {
+				try {
+					if (audioContext && audioContext.state !== 'closed') {
+						return audioContext
+					}
+
+					audioContext = new (window.AudioContext ||
+						window.webkitAudioContext)({
+						sampleRate: sampleRate,
+					})
+					analyser = audioContext.createAnalyser()
+					analyser.fftSize = 256
+
+					const gainNode = audioContext.createGain()
+					gainNode.gain.value = 1.0
+
+					analyser.connect(gainNode)
+					gainNode.connect(audioContext.destination)
+
+					setupVisualization()
+
+					console.log(
+						'Audio context initialized with sample rate:',
+						audioContext.sampleRate
+					)
+					return audioContext
+				} catch (e) {
+					console.error('Error initializing audio context:', e)
+					updateStatus(
+						connectionStatus,
+						'Error initializing audio',
+						'error'
+					)
+					return null
+				}
+			}
+
+			// Audio visualization setup
+			function setupVisualization() {
+				if (visualizationInterval) {
+					clearInterval(visualizationInterval)
+				}
+
+				const canvas = document.createElement('canvas')
+				canvas.width = audioVisualizer.clientWidth
+				canvas.height = audioVisualizer.clientHeight
+				audioVisualizer.innerHTML = ''
+				audioVisualizer.appendChild(canvas)
+
+				const ctx = canvas.getContext('2d')
+				const gradient = ctx.createLinearGradient(
+					0,
+					0,
+					0,
+					canvas.height
+				)
+				gradient.addColorStop(0, '#4a00e0')
+				gradient.addColorStop(1, '#8e2de2')
+
+				visualizationInterval = setInterval(() => {
+					if (!analyser) return
+
+					const bufferLength = analyser.frequencyBinCount
+					const dataArray = new Uint8Array(bufferLength)
+					analyser.getByteFrequencyData(dataArray)
+
+					ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
+					ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+					const barWidth = (canvas.width / bufferLength) * 2.5
+					let x = 0
+
+					for (let i = 0; i < bufferLength; i++) {
+						const barHeight = (dataArray[i] / 255) * canvas.height
+
+						ctx.fillStyle = gradient
+						ctx.fillRect(
+							x,
+							canvas.height - barHeight,
+							barWidth,
+							barHeight
+						)
+
+						x += barWidth + 1
+					}
+				}, 60)
+			}
+
+			// WebSocket connection management
+			function connectWebSocket() {
+				if (ws) {
+					try {
+						ws.close()
+					} catch (e) {
+						console.log('Error closing previous connection:', e)
+					}
+				}
+
+				updateStatus(
+					connectionStatus,
+					'Connecting to audio stream...',
+					'processing'
+				)
+
+				const protocol =
+					window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+				const host = window.location.host
+				ws = new WebSocket(`${protocol}//${host}/ws/audio`)
+
+				ws.binaryType = 'arraybuffer'
+
+				ws.onopen = () => {
+					reconnectAttempts = 0
+					updateStatus(
+						connectionStatus,
+						'Connected to audio stream',
+						'connected'
+					)
+					initAudioContext()
+					startKeepAlive()
+					console.log('WebSocket connection established')
+				}
+
+				ws.onmessage = async (event) => {
+					if (event.data instanceof ArrayBuffer) {
+						try {
+							const audioContext = initAudioContext()
+							if (!audioContext) return
+
+							// Try decoding as WAV first
+							try {
+								const audioData =
+									await audioContext.decodeAudioData(
+										event.data
+									)
+								playAudioData(audioData)
+								return
+							} catch (wavError) {
+								console.log(
+									'WAV decode failed, trying raw PCM:',
+									wavError
+								)
+							}
+
+							// If WAV fails, try raw PCM
+							try {
+								const audioData = decodeRawPCM(
+									event.data,
+									audioContext
+								)
+								playAudioData(audioData)
+							} catch (pcmError) {
+								console.error('PCM decode failed:', pcmError)
+								updateStatus(
+									connectionStatus,
+									'Error decoding audio',
+									'error'
+								)
+							}
+						} catch (e) {
+							console.error('Error processing audio:', e)
+							updateStatus(
+								connectionStatus,
+								'Error processing audio',
+								'error'
+							)
+						}
+					} else if (typeof event.data === 'string') {
+						if (event.data === 'pong') {
+							console.log('Keepalive received')
+						} else {
+							console.log('Server message:', event.data)
+						}
+					}
+				}
+
+				ws.onclose = (event) => {
+					stopKeepAlive()
+
+					if (event.code === 1000) {
+						updateStatus(
+							connectionStatus,
+							'Connection closed',
+							'processing'
+						)
+					} else {
+						const message =
+							event.code === 1006
+								? 'Connection failed'
+								: 'Connection closed'
+						updateStatus(
+							connectionStatus,
+							`${message} (code ${event.code}) - reconnecting...`,
+							'error'
+						)
+
+						if (reconnectAttempts < maxReconnectAttempts) {
+							reconnectAttempts++
+							const delay = Math.min(
+								1000 * reconnectAttempts,
+								5000
+							)
+							setTimeout(connectWebSocket, delay)
+						} else {
+							updateStatus(
+								connectionStatus,
+								'Max reconnection attempts reached',
+								'error'
+							)
+						}
+					}
+				}
+
+				ws.onerror = (error) => {
+					console.error('WebSocket error:', error)
+					updateStatus(connectionStatus, 'Connection error', 'error')
+				}
+			}
+
+			// Play audio data
+			function playAudioData(audioData) {
+				if (!audioContext) {
+					initAudioContext()
+					if (!audioContext) return
+				}
+
+				// Stop previous source if exists
+				if (audioSource) {
+					try {
+						audioSource.stop()
+					} catch (e) {
+						console.log('Error stopping previous source:', e)
+					}
+				}
+
+				// Create new source
+				audioSource = audioContext.createBufferSource()
+				audioSource.buffer = audioData
+				audioSource.connect(analyser)
+				audioSource.start()
+
+				// Visual feedback
+				updateStatus(connectionStatus, 'Playing audio...', 'connected')
+			}
+
+			// Decode raw PCM data
+			function decodeRawPCM(arrayBuffer, audioContext) {
+				const numChannels = 2 // Stereo
+				const bytesPerSample = 2 // 16-bit
+				const totalSamples =
+					arrayBuffer.byteLength / (numChannels * bytesPerSample)
+
+				const audioBuffer = audioContext.createBuffer(
+					numChannels,
+					totalSamples,
+					audioContext.sampleRate
+				)
+
+				const view = new DataView(arrayBuffer)
+
+				for (let channel = 0; channel < numChannels; channel++) {
+					const channelData = audioBuffer.getChannelData(channel)
+					for (let i = 0; i < totalSamples; i++) {
+						const offset =
+							(i * numChannels + channel) * bytesPerSample
+						const sample = view.getInt16(offset, true)
+						channelData[i] = sample / 32768.0 // Convert to float
+					}
+				}
+
+				return audioBuffer
+			}
+
+			// Keepalive functions
+			function startKeepAlive() {
+				stopKeepAlive()
+				keepAliveInterval = setInterval(() => {
+					if (ws && ws.readyState === WebSocket.OPEN) {
+						try {
+							ws.send('ping')
+							console.log('Sent keepalive ping')
+						} catch (e) {
+							console.log('Keepalive send error:', e)
+						}
+					}
+				}, 20000) // Send ping every 20 seconds
+			}
+
+			function stopKeepAlive() {
+				if (keepAliveInterval) {
+					clearInterval(keepAliveInterval)
+					keepAliveInterval = null
+				}
+			}
+
+			// Update status element
+			function updateStatus(element, message, type = '') {
+				element.textContent = message
+				element.className = 'status ' + type
+			}
+
+			// File input handling
+			fileInput.addEventListener('change', (e) => {
+				const file = fileInput.files[0]
+				if (!file) return
+
+				// Hide both previews first
+				videoPreview.style.display = 'none'
+				imagePreview.style.display = 'none'
+
+				if (file.type.startsWith('video/')) {
+					videoPreview.src = URL.createObjectURL(file)
+					videoPreview.style.display = 'block'
+				} else if (file.type.startsWith('image/')) {
+					imagePreview.src = URL.createObjectURL(file)
+					imagePreview.style.display = 'block'
+				}
+			})
+
+			// File upload handling
+			uploadForm.addEventListener('submit', async (e) => {
+				e.preventDefault()
+				const file = fileInput.files[0]
+				if (!file) return
+
+				uploadBtn.disabled = true
+				uploadProgress.style.display = 'block'
+				progressBar.style.width = '0%'
+				updateStatus(uploadStatus, 'Uploading...', 'processing')
+
+				try {
+					const formData = new FormData(uploadForm)
+					const xhr = new XMLHttpRequest()
+
+					xhr.upload.onprogress = (event) => {
+						if (event.lengthComputable) {
+							const percent = Math.round(
+								(event.loaded / event.total) * 100
+							)
+							progressBar.style.width = `${percent}%`
+						}
+					}
+
+					xhr.onload = () => {
+						if (xhr.status >= 200 && xhr.status < 300) {
+							const response = JSON.parse(xhr.responseText)
+							updateStatus(
+								uploadStatus,
+								response.message || 'Processing started',
+								'connected'
+							)
+						} else {
+							throw new Error(xhr.statusText || 'Upload failed')
+						}
+					}
+
+					xhr.onerror = () => {
+						throw new Error('Network error during upload')
+					}
+
+					xhr.open('POST', '/upload', true)
+					xhr.send(formData)
+				} catch (error) {
+					console.error('Upload error:', error)
+					updateStatus(
+						uploadStatus,
+						error.message || 'Upload failed',
+						'error'
+					)
+				} finally {
+					uploadBtn.disabled = false
+					setTimeout(() => {
+						uploadProgress.style.display = 'none'
+					}, 2000)
+				}
+			})
+
+			// Live processing
+			// Replace the existing liveBtn.addEventListener('click', ...) with this:
+			liveBtn.addEventListener('click', async () => {
+				liveBtn.disabled = true
+				updateStatus(
+					liveStatus,
+					'Requesting camera access...',
+					'processing'
+				)
+
+				try {
+					// Get user's camera
+					const stream = await navigator.mediaDevices.getUserMedia({
+						video: { width: 640, height: 480, frameRate: 10 },
+					})
+
+					// Create video element if not exists
+					let localVideo = document.getElementById('localVideo')
+					if (!localVideo) {
+						localVideo = document.createElement('video')
+						localVideo.id = 'localVideo'
+						localVideo.width = 320
+						localVideo.height = 240
+						localVideo.autoplay = true
+						localVideo.muted = true
+						localVideo.style.display = 'block'
+						document.querySelector('.card').appendChild(localVideo)
+					}
+
+					// Create canvas if not exists
+					let canvas = document.getElementById('videoCanvas')
+					if (!canvas) {
+						canvas = document.createElement('canvas')
+						canvas.id = 'videoCanvas'
+						canvas.width = 320
+						canvas.height = 240
+						canvas.style.display = 'none'
+						document.querySelector('.card').appendChild(canvas)
+					}
+
+					const ctx = canvas.getContext('2d')
+					localVideo.srcObject = stream
+
+					// Create separate WebSocket for video frames
+					const videoWs = new WebSocket(
+						`${
+							window.location.protocol === 'https:'
+								? 'wss:'
+								: 'ws:'
+						}//${window.location.host}/ws/video`
+					)
+
+					videoWs.onopen = () => {
+						console.log('Video WebSocket connected')
+						updateStatus(
+							liveStatus,
+							'Camera active - streaming frames...',
+							'connected'
+						)
+
+						// Start sending frames
+						const sendFrame = () => {
+							if (
+								localVideo.videoWidth > 0 &&
+								localVideo.videoHeight > 0
+							) {
+								// Draw video frame to canvas
+								ctx.drawImage(
+									localVideo,
+									0,
+									0,
+									canvas.width,
+									canvas.height
+								)
+
+								// Convert to blob and send
+								canvas.toBlob(
+									(blob) => {
+										if (
+											blob &&
+											videoWs.readyState ===
+												WebSocket.OPEN
+										) {
+											console.log(
+												'Sending frame, size:',
+												blob.size
+											)
+											videoWs.send(blob)
+										}
+									},
+									'image/jpeg',
+									0.7
+								)
+							}
+
+							// Continue sending frames
+							if (videoWs.readyState === WebSocket.OPEN) {
+								setTimeout(sendFrame, 200) // Send frame every 200ms (5 FPS)
+							}
+						}
+
+						// Wait for video to be ready then start
+						localVideo.onloadedmetadata = () => {
+							console.log('Video loaded, starting frame capture')
+							setTimeout(sendFrame, 1000) // Start after 1 second
+						}
+
+						// If already loaded
+						if (localVideo.readyState >= 2) {
+							setTimeout(sendFrame, 1000)
+						}
+					}
+
+					videoWs.onerror = (error) => {
+						console.error('Video WebSocket error:', error)
+						updateStatus(
+							liveStatus,
+							'Video connection error',
+							'error'
+						)
+					}
+
+					videoWs.onclose = () => {
+						console.log('Video WebSocket closed')
+						updateStatus(
+							liveStatus,
+							'Video connection closed',
+							'error'
+						)
+					}
+
+					// Start live processing on backend
+					const response = await fetch('/start-live', {
+						method: 'POST',
+					})
+					if (!response.ok) {
+						throw new Error(
+							(await response.text()) || 'Failed to start'
+						)
+					}
+				} catch (error) {
+					console.error('Camera access error:', error)
+					updateStatus(
+						liveStatus,
+						`Camera error: ${error.message}`,
+						'error'
+					)
+				} finally {
+					liveBtn.disabled = false
+				}
+			})
+
+			// Initialize on DOM load
+			document.addEventListener('DOMContentLoaded', () => {
+				// Check for required APIs
+				if (!window.WebSocket) {
+					updateStatus(
+						connectionStatus,
+						'WebSocket not supported in this browser',
+						'error'
+					)
+					return
+				}
+
+				if (!(window.AudioContext || window.webkitAudioContext)) {
+					updateStatus(
+						connectionStatus,
+						'Web Audio API not supported',
+						'error'
+					)
+					return
+				}
+
+				// Initialize audio context
+				initAudioContext()
+
+				// Connect WebSocket
+				connectWebSocket()
+
+				// Handle page visibility changes
+				document.addEventListener('visibilitychange', () => {
+					if (document.visibilityState === 'visible') {
+						console.log('Page became visible, reconnecting...')
+						connectWebSocket()
+					} else {
+						console.log('Page hidden, cleaning up...')
+						stopKeepAlive()
+					}
+				})
+			})
+
+			// Clean up on window close
+			window.addEventListener('beforeunload', () => {
+				stopKeepAlive()
+				if (ws) {
+					ws.close()
+				}
+				if (audioSource) {
+					audioSource.stop()
+				}
+				if (visualizationInterval) {
+					clearInterval(visualizationInterval)
+				}
+			})
+		</script>
+	</body>
+</html>
