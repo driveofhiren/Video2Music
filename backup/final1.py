@@ -23,6 +23,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from enum import Enum
+import math
 
 # Check for GPU availability and set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,52 +44,8 @@ CHANNELS = 2
 MODEL = 'models/lyria-realtime-exp'
 OUTPUT_RATE = 48000
 
-# Music parameters database (kept for fallback compatibility)
-INSTRUMENTS = [
-    "303 Acid Bass", "808 Hip Hop Beat", "Accordion", "Alto Saxophone", "Bagpipes",
-    "Balalaika Ensemble", "Banjo", "Bass Clarinet", "Bongos", "Boomy Bass",
-    "Bouzouki", "Buchla Synths", "Cello", "Charango", "Clavichord",
-    "Conga Drums", "Didgeridoo", "Dirty Synths", "Djembe", "Drumline",
-    "Dulcimer", "Fiddle", "Flamenco Guitar", "Funk Drums", "Glockenspiel",    
-    "Guitar", "Hang Drum", "Harmonica", "Harp", "Harpsichord",
-    "Hurdy-gurdy", "Kalimba", "Koto", "Lyre", "Mandolin",
-    "Maracas", "Marimba", "Mbira", "Mellotron", "Metallic Twang",
-    "Moog Oscillations", "Ocarina", "Persian Tar", "Pipa", "Precision Bass",
-    "Ragtime Piano", "Rhodes Piano", "Shamisen", "Shredding Guitar", "Sitar",
-    "Slide Guitar", "Smooth Pianos", "Spacey Synths", "Steel Drum", "Synth Pads",
-    "Tabla", "TR-909 Drum Machine", "Trumpet", "Tuba", "Vibraphone",
-    "Viola Ensemble", "Warm Acoustic Guitar", "Woodwinds"
-]
-
-GENRES = [
-    "Acid Jazz", "Afrobeat", "Alternative Country", "Baroque", "Bengal Baul",
-    "Bhangra", "Bluegrass", "Blues Rock", "Bossa Nova", "Breakbeat",
-    "Celtic Folk", "Chillout", "Chiptune", "Classic Rock", "Contemporary R&B",
-    "Cumbia", "Deep House", "Disco Funk", "Drum & Bass", "Dubstep",
-    "EDM", "Electro Swing", "Funk Metal", "G-funk", "Garage Rock",
-    "Glitch Hop", "Grime", "Hyperpop", "Indian Classical", "Indie Electronic",
-    "Indie Folk", "Indie Pop", "Irish Folk", "Jam Band", "Jamaican Dub",
-    "Jazz Fusion", "Latin Jazz", "Lo-Fi Hip Hop", "Marching Band", "Merengue",
-    "New Jack Swing", "Minimal Techno", "Moombahton", "Neo-Soul", "Orchestral Score",
-    "Piano Ballad", "Polka", "Post-Punk", "60s Psychedelic Rock", "Psytrance",
-    "R&B", "Reggae", "Reggaeton", "Renaissance Music", "Salsa",
-    "Shoegaze", "Ska", "Surf Rock", "Synthpop", "Techno",
-    "Trance", "Trap Beat", "Trip Hop", "Vaporwave", "Witch house"
-]
-
-MOODS = [
-    "Acoustic Instruments", "Ambient", "Bright Tones", "Chill", "Crunchy Distortion",
-    "Danceable", "Dreamy", "Echo", "Emotional", "Ethereal Ambience",
-    "Experimental", "Fat Beats", "Funky", "Glitchy Effects", "Huge Drop",
-    "Live Performance", "Lo-fi", "Ominous Drone", "Psychedelic", "Rich Orchestration",
-    "Saturated Tones", "Subdued Melody", "Sustained Chords", "Swirling Phasers",
-    "Tight Groove", "Unsettling", "Upbeat", "Virtuoso", "Weird Noises"
-]
-
-# Precompute embeddings on GPU if available (kept for fallback)
-instrument_embs = model_st.encode(INSTRUMENTS, convert_to_tensor=True).to(device)
-genre_embs = model_st.encode(GENRES, convert_to_tensor=True).to(device)
-mood_embs = model_st.encode(MOODS, convert_to_tensor=True).to(device)
+# Motion threshold - CRITICAL FIX
+MOTION_UPDATE_THRESHOLD = 0.10  # Don't update prompts if motion < 0.10
 
 class PromptCategory(Enum):
     RHYTHMIC = "rhythmic"
@@ -99,16 +56,18 @@ class PromptCategory(Enum):
     TRANSITION = "transition"
     TEXTURAL = "textural"
     HARMONIC = "harmonic"
+    DRUMS = "drums" 
 
 @dataclass
 class DynamicPrompt:
     text: str
     category: PromptCategory
     base_weight: float
-    triggers: List[str]  # Conditions that activate this prompt
-    intensity_range: Tuple[float, float]  # Min/max intensity multipliers
-    max_duration: Optional[float] = None  # For time-limited prompts
-    cooldown: float = 0.0  # Minimum time between activations
+    triggers: List[str]
+    intensity_range: Tuple[float, float]
+    max_duration: Optional[float] = None
+    cooldown: float = 0.0
+    priority: int = 1  # Higher number = higher priority
 
 @dataclass
 class ActivePrompt:
@@ -117,6 +76,208 @@ class ActivePrompt:
     activation_time: float
     target_weight: float
     fade_duration: float = 2.0
+    decay_rate: float = 0.1  # How fast it decays when not triggered
+
+class AdvancedTriggerEngine:
+    """Enhanced trigger detection with intelligent analysis - SIMPLIFIED and FOCUSED"""
+    
+    def __init__(self):
+        self.motion_history = []
+        self.brightness_history = []
+        self.scene_history = []
+        self.object_history = []
+        self.trigger_cooldowns = {}
+        self.energy_accumulator = 0.0
+        self.beat_timer = 0.0
+        self.last_major_change = 0.0
+        
+        # Musical timing
+        self.bpm_estimate = 120
+        self.beat_interval = 60.0 / self.bpm_estimate
+        
+    def update_histories(self, analysis: Dict):
+        """Update all analysis histories - REDUCED SIZE"""
+        current_time = time.time()
+        
+        # Motion history with timestamps - REDUCED SIZE
+        motion = analysis.get('motion', 0.0)
+        self.motion_history.append((current_time, motion))
+        if len(self.motion_history) > 20:  # REDUCED from 50 to 20
+            self.motion_history.pop(0)
+            
+        # Brightness history - REDUCED SIZE
+        brightness_values = {'dark': 0.2, 'dim': 0.4, 'medium': 0.6, 'bright': 1.0}
+        brightness_val = brightness_values.get(analysis.get('brightness', 'medium'), 0.6)
+        self.brightness_history.append((current_time, brightness_val))
+        if len(self.brightness_history) > 10:  # REDUCED from 30 to 10
+            self.brightness_history.pop(0)
+            
+        # Scene history - REDUCED SIZE
+        top_scene = analysis['top_scenes'][0][0] if analysis['top_scenes'] else 'unknown'
+        self.scene_history.append((current_time, top_scene))
+        if len(self.scene_history) > 8:  # REDUCED from 20 to 8
+            self.scene_history.pop(0)
+            
+        # Object history - REDUCED SIZE
+        object_names = [obj['name'] for obj in analysis.get('objects', [])]
+        self.object_history.append((current_time, set(object_names)))
+        if len(self.object_history) > 6:  # REDUCED from 15 to 6
+            self.object_history.pop(0)
+    
+    def calculate_motion_derivatives(self) -> Dict[str, float]:
+        """Calculate motion velocity and acceleration - SIMPLIFIED"""
+        if len(self.motion_history) < 3:
+            return {'velocity': 0.0, 'acceleration': 0.0, 'smoothed_motion': 0.0}
+            
+        # Get recent motion values - REDUCED WINDOW
+        recent_motions = [m[1] for m in self.motion_history[-5:]]  # REDUCED from 10 to 5
+        smoothed_motion = np.mean(recent_motions)
+        
+        # Calculate velocity (rate of change) - SIMPLIFIED
+        if len(self.motion_history) >= 3:  # REDUCED from 5 to 3
+            recent_3 = [m[1] for m in self.motion_history[-3:]]
+            velocity = np.gradient(recent_3)[-1] if len(recent_3) > 1 else 0.0
+        else:
+            velocity = 0.0
+            
+        return {
+            'velocity': float(velocity),
+            'acceleration': 0.0,  # SIMPLIFIED - removed complex acceleration
+            'smoothed_motion': float(smoothed_motion)
+        }
+    
+    def detect_scene_transitions(self) -> Dict[str, bool]:
+        """Detect scene transitions - SIMPLIFIED"""
+        if len(self.scene_history) < 2:
+            return {'scene_change': False, 'dramatic_shift': False}
+            
+        recent_scenes = [s[1] for s in self.scene_history[-3:]]  # REDUCED from 5 to 3
+        
+        # Simple scene change
+        scene_change = len(set(recent_scenes[-2:])) > 1
+        
+        # Dramatic shift - SIMPLIFIED
+        dramatic_shift = len(set(recent_scenes)) >= 3
+            
+        return {
+            'scene_change': scene_change,
+            'dramatic_shift': dramatic_shift
+        }
+    
+    def calculate_energy_level(self, analysis: Dict) -> Dict[str, float]:
+        """Calculate energy metrics - SIMPLIFIED"""
+        motion_data = self.calculate_motion_derivatives()
+        current_motion = motion_data['smoothed_motion']
+        
+        # Energy accumulator (builds up with sustained motion)
+        if current_motion > 0.25:
+            self.energy_accumulator = min(1.0, self.energy_accumulator + 0.1)
+        else:
+            self.energy_accumulator = max(0.0, self.energy_accumulator - 0.05)
+            
+        # Motion spike detection - SIMPLIFIED
+        motion_spike = (motion_data['velocity'] > 0.2 and current_motion > 0.5)
+        
+        return {
+            'base_energy': current_motion,
+            'accumulated_energy': self.energy_accumulator,
+            'motion_spike': 1.0 if motion_spike else 0.0,
+            'combined_energy': (current_motion * 0.6 + self.energy_accumulator * 0.4)
+        }
+    
+    def detect_musical_moments(self) -> Dict[str, bool]:
+        """Detect musically relevant moments - SIMPLIFIED"""
+        current_time = time.time()
+        
+        # Beat sync (more intelligent timing)
+        time_since_beat = current_time - self.beat_timer
+        beat_sync = time_since_beat >= self.beat_interval * 0.9
+        
+        if beat_sync:
+            self.beat_timer = current_time
+            
+        # Beat emphasis (every 4 beats) - SIMPLIFIED
+        beat_emphasis = beat_sync and (int(current_time / self.beat_interval) % 4 == 0)
+        
+        return {
+            'beat_sync': beat_sync,
+            'beat_emphasis': beat_emphasis
+        }
+    
+    def check_trigger_cooldown(self, trigger_name: str, cooldown_time: float = 3.0) -> bool:
+        """Check if trigger is in cooldown - INCREASED COOLDOWN"""
+        current_time = time.time()
+        last_triggered = self.trigger_cooldowns.get(trigger_name, 0)
+        
+        if current_time - last_triggered >= cooldown_time:
+            self.trigger_cooldowns[trigger_name] = current_time
+            return True
+        return False
+    
+    def generate_intelligent_triggers(self, analysis: Dict) -> Set[str]:
+        """Generate FOCUSED and INTELLIGENT triggers - DRASTICALLY REDUCED"""
+        triggers = set()
+        current_time = time.time()
+        
+        # Update all histories first
+        self.update_histories(analysis)
+        
+        # CRITICAL: Don't update triggers if motion is too low
+        current_motion = analysis.get('motion', 0.0)
+        if current_motion < MOTION_UPDATE_THRESHOLD:
+            triggers.add('calm_scene')
+            return triggers
+        
+        # Get calculated metrics
+        motion_data = self.calculate_motion_derivatives()
+        scene_transitions = self.detect_scene_transitions()
+        energy_data = self.calculate_energy_level(analysis)
+        musical_moments = self.detect_musical_moments()
+        
+        # === CORE MOTION TRIGGERS (ONLY 2) ===
+        smoothed_motion = motion_data['smoothed_motion']
+        
+        if smoothed_motion > 0.3:  # INCREASED threshold
+            triggers.add('high_motion')
+        elif smoothed_motion > 0.2:  # INCREASED threshold
+            triggers.add('medium_motion')
+        else:
+            triggers.add('calm_scene')
+            
+        # === ENERGY TRIGGERS (SELECTIVE) ===
+        if energy_data['accumulated_energy'] > 0.8:  # INCREASED threshold
+            triggers.add('high_energy')
+        if energy_data['motion_spike'] > 0 and self.check_trigger_cooldown('energy_spike', 5.0):  # LONGER COOLDOWN
+            triggers.add('energy_spike')
+            
+        # === SCENE TRIGGERS (WITH COOLDOWNS) ===
+        if scene_transitions['scene_change'] and self.check_trigger_cooldown('scene_change', 4.0):
+            triggers.add('scene_change')
+        if scene_transitions['dramatic_shift'] and self.check_trigger_cooldown('dramatic_shift', 8.0):
+            triggers.add('dramatic_shift')
+            
+        # === MUSICAL TIMING (ESSENTIAL ONLY) ===
+        if musical_moments['beat_sync']:
+            triggers.add('beat_sync')
+        if musical_moments['beat_emphasis'] and self.check_trigger_cooldown('beat_emphasis', 2.0):
+            triggers.add('beat_emphasis')
+            
+        # === ENVIRONMENTAL (BASIC ONLY) ===
+        brightness = analysis.get('brightness', 'medium')
+        if brightness in ['dark', 'dim']:
+            triggers.add('dark_scene')
+        elif brightness == 'bright':
+            triggers.add('bright_scene')
+            
+        # === OBJECT-BASED (SELECTIVE) ===
+        objects = analysis.get('objects', [])
+        object_names = [obj['name'] for obj in objects]
+        
+        # Only add human presence if there's also motion
+        if any(name == 'person' for name in object_names) and current_motion > 0.3:
+            triggers.add('human_presence')
+            
+        return triggers
 
 class MediaAnalyzer:
     def __init__(self):
@@ -127,13 +288,12 @@ class MediaAnalyzer:
         self.depth_model = self._load_depth_model().to(device)
         self.depth_transform = transforms.Compose([
             transforms.ToPILImage(),
-            transforms.Resize((256, 256)),  # Depth model expects 256x256
+            transforms.Resize((256, 256)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize for depth model
+            transforms.Normalize(mean=[0.5], std=[0.5])
         ])
         
     def _load_depth_model(self):
-        # Using a lightweight depth estimation model
         model = torch.hub.load('intel-isl/MiDaS', 'MiDaS_small')
         model.eval()
         return model
@@ -230,7 +390,7 @@ class MediaAnalyzer:
         self.prev_gray = gray
         objects = self._detect_objects(frame_resized)
         colors = self._get_dominant_colors(frame_resized)
-        depth = self.analyze_depth(frame_resized)  # New depth analysis
+        depth = self.analyze_depth(frame_resized)
         
         return {
             'top_scenes': top_scenes,
@@ -262,7 +422,7 @@ class MediaAnalyzer:
         time_of_day = self._get_time_of_day_from_image(img_resized)
         objects = self._detect_objects(img_resized)
         colors = self._get_dominant_colors(img_resized)
-        depth = self.analyze_depth(img_resized)  # New depth analysis
+        depth = self.analyze_depth(img_resized)
         
         return {
             'top_scenes': top_scenes,
@@ -325,7 +485,6 @@ class MediaAnalyzer:
         return np.mean(diff) / 255.0
     
     def _detect_objects(self, frame):
-        # Move frame to GPU if available
         frame_gpu = torch.from_numpy(frame).to(device) if torch.cuda.is_available() else frame
         results = yolo_model(frame_gpu, verbose=False)[0]
         names = yolo_model.names
@@ -366,35 +525,53 @@ class EnhancedMusicGenerator:
         # Initialize AI client for prompt generation
         self.ai_client = None
         self.base_prompts = []
-        self.dynamic_prompt_pools = {}  # Category -> List[DynamicPrompt]
+        self.dynamic_prompt_pools = {}
         self.base_prompts_generated = False
         
+        # Enhanced trigger engine
+        self.trigger_engine = AdvancedTriggerEngine()
+        
         # Live processing state
-        self.active_prompts = {}  # prompt.text -> ActivePrompt
-        self.prompt_history = {}  # prompt.text -> last_activation_time
+        self.active_prompts = {}
+        self.prompt_history = {}
         self.scene_context_history = []
-        self.motion_window = []
-        self.brightness_history = []
         
         # Analysis aggregation for first 5 seconds
         self.initial_analysis_data = []
         self.analysis_start_time = None
         
-        # Musical balance constraints
+        # Musical balance constraints - SIGNIFICANTLY REDUCED
         self.max_concurrent_prompts = {
-            PromptCategory.RHYTHMIC: 3,
-            PromptCategory.BASS: 2,
-            PromptCategory.MELODIC: 2,
-            PromptCategory.PERCUSSIVE: 4,
-            PromptCategory.ATMOSPHERIC: 2,
-            PromptCategory.TRANSITION: 1,
-            PromptCategory.TEXTURAL: 2,
-            PromptCategory.HARMONIC: 2
+            PromptCategory.RHYTHMIC: 2,      # REDUCED from 3 to 2
+            PromptCategory.BASS: 1,          # REDUCED from 2 to 1
+            PromptCategory.MELODIC: 1,       # REDUCED from 2 to 1
+            PromptCategory.PERCUSSIVE: 2,    # REDUCED from 4 to 2
+            PromptCategory.ATMOSPHERIC: 1,   # REDUCED from 2 to 1
+            PromptCategory.TRANSITION: 1,    # SAME
+            PromptCategory.TEXTURAL: 1,      # REDUCED from 2 to 1
+            PromptCategory.HARMONIC: 1,      # REDUCED from 2 to 1
+            PromptCategory.DRUMS: 2          # REDUCED from 3 to 2
+        }
+        
+        # MAXIMUM TOTAL DYNAMIC PROMPTS AT ANY TIME
+        self.MAX_TOTAL_DYNAMIC_PROMPTS = 6  # NEW HARD LIMIT
+        
+        # Prompt priority weights by category
+        self.category_priorities = {
+            PromptCategory.DRUMS: 1.4,       # Highest priority
+            PromptCategory.BASS: 1.3,        # Very high priority
+            PromptCategory.RHYTHMIC: 1.2,    # High priority
+            PromptCategory.MELODIC: 1.0,     # Standard priority
+            PromptCategory.ATMOSPHERIC: 0.8,  # Lower priority
+            PromptCategory.HARMONIC: 0.7,    # Lower priority
+            PromptCategory.PERCUSSIVE: 0.6,  # Lowest priority
+            PromptCategory.TEXTURAL: 0.5,    # Lowest priority
+            PromptCategory.TRANSITION: 1.5   # Highest when active
         }
         
         # Current dynamic prompts for monitoring
         self.current_dynamic_prompts = []
-
+    
     def initialize_ai_client(self):
         """Initialize the AI client for prompt generation"""
         try:
@@ -526,7 +703,7 @@ class EnhancedMusicGenerator:
                 return self._fallback_base_config(aggregated_data), self._fallback_base_prompts(aggregated_data)
         
         ai_prompt = f"""
-Based on this comprehensive video scene analysis, generate a complete adaptive music system including:
+You are an electronic dance music AI DJ. Based on this comprehensive video scene analysis, generate a complete adaptive music system including:
 1. Base music configuration
 2. Core foundational prompts (base prompts that stay constant)
 3. Dynamic prompt pools for live adaptation
@@ -540,13 +717,21 @@ Scene Analysis:
 - Depth Profile: {aggregated_data['depth_profile']}
 - Colors: {', '.join([color for color, _ in aggregated_data['dominant_colors'][:3]])}
 
-Available Scales: C_MAJOR_A_MINOR, D_FLAT_MAJOR_B_FLAT_MINOR, D_MAJOR_B_MINOR, E_FLAT_MAJOR_C_MINOR, E_MAJOR_D_FLAT_MINOR, F_MAJOR_D_MINOR, G_FLAT_MAJOR_E_FLAT_MINOR, G_MAJOR_E_MINOR, A_FLAT_MAJOR_F_MINOR, A_MAJOR_G_FLAT_MINOR, B_FLAT_MAJOR_G_MINOR, B_MAJOR_A_FLAT_MINOR
+
+Available Enhanced Triggers:
+Motion: high_motion, medium_motion, low_motion, calm_moment, motion_acceleration, motion_spike, energy_burst, peak_energy
+Scene: scene_change, dramatic_shift, gradual_transition, deep_scene, shallow_scene, spatial_depth, intimate_space
+Energy: high_energy_sustained, energy_spike, peak_energy, action_scene, sports_scene, dynamic_action
+Musical: beat_sync, beat_emphasis, drum_moment, harmonic_need, harmonic_support, texture_need
+Environmental: dark_scene, bright_scene, atmospheric_mood, energetic_mood, evening_mood, morning_energy
+Spatial: deep_scene, shallow_scene, spatial_depth, close_focus, atmospheric_space
+Social: human_presence, social_scene, vehicle_scene, movement_scene
 
 Generate JSON in this exact format:
 {{
     "config": {{
         "bpm": <60-200>,
-        "scale": "<scale_name>",
+        "scale": A_FLAT_MAJOR_F_MINOR,
         "density": <0.0-1.0>,
         "brightness": <0.0-2.0>,
         "guidance": <1.0-6.0>
@@ -559,32 +744,36 @@ Generate JSON in this exact format:
             {{
                 "text": "<drum element like kick, snare, hi-hat>",
                 "base_weight": <1.0-4.0>,
-                "triggers": ["high_motion", "beat_sync", "energy_build"],
-                "intensity_range": [0.5, 2.0]
+                "triggers": ["high_motion", "beat_sync", "energy_spike"],
+                "intensity_range": [0.5, 2.0],
+                "priority": <1-3>
             }}
         ],
         "bass": [
             {{
                 "text": "<bass element like sub bass, bass hit, bass drop>",
                 "base_weight": <1.0-4.0>,
-                "triggers": ["motion_spike", "scene_change", "low_frequency_need"],
-                "intensity_range": [0.8, 2.5]
+                "triggers": ["motion_spike", "scene_change", "peak_energy"],
+                "intensity_range": [0.8, 2.5],
+                "priority": <1-3>
             }}
         ],
         "melodic": [
             {{
                 "text": "<melodic element like lead synth, pad, arpeggio>",
                 "base_weight": <1.0-3.5>,
-                "triggers": ["calm_moment", "emotional_scene", "harmonic_need"],
-                "intensity_range": [0.5, 2.0]
+                "triggers": ["calm_moment", "harmonic_need", "atmospheric_mood"],
+                "intensity_range": [0.5, 2.0],
+                "priority": <1-3>
             }}
         ],
         "percussive": [
             {{
                 "text": "<percussion like shaker, clap, rim shot>",
                 "base_weight": <0.8-3.0>,
-                "triggers": ["medium_motion", "rhythmic_accent", "texture_need"],
-                "intensity_range": [0.3, 1.8]
+                "triggers": ["medium_motion", "beat_emphasis", "texture_need"],
+                "intensity_range": [0.3, 1.8],
+                "priority": <1-2>
             }}
         ],
         "atmospheric": [
@@ -592,46 +781,61 @@ Generate JSON in this exact format:
                 "text": "<atmosphere like reverb, ambient texture, pad>",
                 "base_weight": <1.0-3.0>,
                 "triggers": ["deep_scene", "calm_moment", "spatial_depth"],
-                "intensity_range": [0.5, 1.5]
+                "intensity_range": [0.5, 1.5],
+                "priority": <1-2>
             }}
         ],
         "transition": [
             {{
                 "text": "<transition like build-up, drop, sweep>",
                 "base_weight": <2.0-4.0>,
-                "triggers": ["scene_change", "motion_change", "dramatic_shift"],
+                "triggers": ["scene_change", "dramatic_shift", "peak_energy"],
                 "intensity_range": [1.0, 3.0],
                 "max_duration": 4.0,
-                "cooldown": 8.0
+                "cooldown": 8.0,
+                "priority": 3
             }}
         ],
         "textural": [
             {{
                 "text": "<texture like vinyl crackle, tape saturation, distortion>",
                 "base_weight": <0.5-2.0>,
-                "triggers": ["vintage_scene", "texture_need", "lo_fi_moment"],
-                "intensity_range": [0.2, 1.2]
+                "triggers": ["texture_need", "atmospheric_mood", "evening_mood"],
+                "intensity_range": [0.2, 1.2],
+                "priority": <1-2>
             }}
         ],
         "harmonic": [
             {{
                 "text": "<harmony like chord stab, sustained note, harmonic layer>",
                 "base_weight": <1.0-3.0>,
-                "triggers": ["harmonic_support", "emotional_moment", "musical_fill"],
-                "intensity_range": [0.5, 2.0]
+                "triggers": ["harmonic_support", "calm_moment", "spatial_depth"],
+                "intensity_range": [0.5, 2.0],
+                "priority": <1-2>
+            }}
+        ],
+        "drums": [
+            {{
+                "text": "<drum kit element like kick drum, snare hit, cymbal crash, hi-hat pattern>",
+                "base_weight": <1.5-4.0>,
+                "triggers": ["high_motion", "action_scene", "energy_spike", "drum_moment", "beat_emphasis"],
+                "intensity_range": [0.8, 3.5],
+                "priority": <2-3>
             }}
         ]
     }}
 }}
 
 Guidelines:
-- Base prompts (4-6): Core elements that define the musical style and stay constant
-- Dynamic pools: Each category should have 3-6 contextually relevant options
-- Triggers should match common video analysis conditions
-- Intensity ranges allow dynamic scaling based on context strength
-- Transition elements need duration limits to prevent musical chaos
-- All prompts should work together harmoniously within the chosen genre/style
-- Consider the scene type when choosing instruments (e.g., electronic for urban, acoustic for nature)
+- Choose BPM based on motion level and scene energy (high motion = higher BPM)
+- Base prompts (4-6): Core elements that define the musical style and stay constant, mood weight should be 1.0-2.0
+- Dynamic pools: Each category should have 4-8 contextually relevant options
+- DRUMS category: Focus on expressive drum kit elements that respond to video action and energy
+- Higher priority prompts (2-3) are selected first when multiple triggers match
+- Transition elements need duration limits and cooldowns to prevent chaos
+- Use the enhanced trigger list for more intelligent responses
+- Consider depth and spatial elements for atmospheric choices
+- Match energy level of prompts to scene characteristics
 """
 
         try:
@@ -665,7 +869,7 @@ Guidelines:
                 base_prompts.append(types.WeightedPrompt(text=text, weight=weight))
                 print(f"Added base prompt: {text} (weight: {weight:.2f})")
             
-            # Process dynamic prompt pools
+            # Process dynamic prompt pools with enhanced features
             dynamic_pools_data = result.get('dynamic_pools', {})
             self.dynamic_prompt_pools = {}
             
@@ -683,10 +887,11 @@ Guidelines:
                             intensity_range=(float(prompt_data['intensity_range'][0]), 
                                            float(prompt_data['intensity_range'][1])),
                             max_duration=prompt_data.get('max_duration'),
-                            cooldown=prompt_data.get('cooldown', 0.0)
+                            cooldown=prompt_data.get('cooldown', 0.0),
+                            priority=prompt_data.get('priority', 1)
                         )
                         self.dynamic_prompt_pools[category].append(dynamic_prompt)
-                        print(f"Added {category_name} prompt: {dynamic_prompt.text}")
+                        print(f"Added {category_name} prompt: {dynamic_prompt.text} (priority: {dynamic_prompt.priority})")
                 
                 except ValueError as e:
                     print(f"Unknown category {category_name}, skipping: {e}")
@@ -701,100 +906,58 @@ Guidelines:
             print(f"Error generating config and prompts: {e}")
             return self._fallback_base_config(aggregated_data), self._fallback_base_prompts(aggregated_data)
 
-    def _analyze_context_triggers(self, analysis: Dict) -> Set[str]:
-        """Analyze current context and return active triggers"""
-        triggers = set()
-        
-        # Motion-based triggers
-        motion = analysis.get('motion', 0.0)
-        if motion > 0.6:
-            triggers.add('high_motion')
-        elif motion > 0.3:
-            triggers.add('medium_motion')
-        else:
-            triggers.add('calm_moment')
-        
-        # Motion change detection
-        if len(self.motion_window) > 5:
-            recent_motion = np.array(self.motion_window[-5:])
-            motion_change = np.std(recent_motion)
-            if motion_change > 0.3:
-                triggers.add('motion_change')
-            if motion > 0.8 and any(m < 0.3 for m in recent_motion[-3:]):
-                triggers.add('motion_spike')
-        
-        # Scene-based triggers
-        depth_info = analysis.get('depth', {})
-        depth_profile = depth_info.get('depth_profile', 'medium')
-        if 'deep' in depth_profile:
-            triggers.add('deep_scene')
-            triggers.add('spatial_depth')
-        
-        # Brightness-based triggers
-        brightness = analysis.get('brightness', 'medium')
-        if brightness == 'dark':
-            triggers.add('dark_scene')
-        elif brightness == 'bright':
-            triggers.add('bright_scene')
-        
-        # Scene change detection
-        current_scenes = [scene for scene, _ in analysis['top_scenes'][:2]]
-        if len(self.scene_context_history) > 3:
-            prev_scenes = self.scene_context_history[-2]
-            if not any(scene in prev_scenes for scene in current_scenes):
-                triggers.add('scene_change')
-                triggers.add('dramatic_shift')
-        
-        # Object-based triggers
-        objects = analysis.get('objects', [])
-        if any(obj['name'] == 'person' for obj in objects):
-            triggers.add('human_presence')
-        
-        # Musical timing triggers (simulated beat sync)
-        current_time = time.time()
-        if hasattr(self, 'last_beat_time'):
-            time_since_beat = current_time - self.last_beat_time
-            if time_since_beat > 2.0:  # Every 2 seconds approximately
-                triggers.add('beat_sync')
-                self.last_beat_time = current_time
-        else:
-            self.last_beat_time = current_time
-            triggers.add('beat_sync')
-        
-        # Add general triggers based on analysis
-        triggers.add('texture_need')
-        triggers.add('harmonic_need')
-        
-        # Store scene context for next comparison
-        self.scene_context_history.append(current_scenes)
-        if len(self.scene_context_history) > 5:
-            self.scene_context_history.pop(0)
-        
-        return triggers
-
     def _calculate_dynamic_intensity(self, analysis: Dict, prompt: DynamicPrompt, triggers: Set[str]) -> float:
-        """Calculate intensity multiplier for a dynamic prompt based on current context"""
+        """Enhanced intensity calculation with more sophisticated logic"""
         intensity = 1.0
         
         # Base intensity from trigger matching
         matching_triggers = set(prompt.triggers).intersection(triggers)
+        if not matching_triggers:
+            return 0.0  # No triggers matched
+            
         trigger_strength = len(matching_triggers) / len(prompt.triggers)
         
-        # Motion influence
+        # Motion influence with smoothing
         motion = analysis.get('motion', 0.0)
-        if prompt.category in [PromptCategory.RHYTHMIC, PromptCategory.BASS]:
-            intensity *= (0.5 + motion * 1.5)
+        
+        # Category-specific motion responses
+        if prompt.category in [PromptCategory.RHYTHMIC, PromptCategory.BASS, PromptCategory.DRUMS]:
+            intensity *= (0.4 + motion * 1.6)  # Strong response to motion
         elif prompt.category == PromptCategory.ATMOSPHERIC:
-            intensity *= (1.2 - motion * 0.4)  # More atmospheric when less motion
+            intensity *= (1.3 - motion * 0.5)  # Inverse response to motion
+        elif prompt.category == PromptCategory.MELODIC:
+            intensity *= (0.7 + motion * 0.6)  # Moderate response
+        
+        # Special intensity boosts based on specific triggers
+        if prompt.category == PromptCategory.DRUMS:
+            if 'high_motion' in triggers or 'action_scene' in triggers:
+                intensity *= 1.4
+            if 'energy_spike' in triggers or 'peak_energy' in triggers:
+                intensity *= 1.3
+            if 'drum_moment' in triggers:
+                intensity *= 1.2
+                
+        if prompt.category == PromptCategory.TRANSITION:
+            if 'dramatic_shift' in triggers:
+                intensity *= 1.5
+            if 'scene_change' in triggers:
+                intensity *= 1.3
         
         # Depth influence
         depth_info = analysis.get('depth', {})
         avg_depth = depth_info.get('avg_depth', 0.5)
+        
         if prompt.category == PromptCategory.ATMOSPHERIC:
-            intensity *= (0.8 + avg_depth * 0.8)
+            intensity *= (0.6 + avg_depth * 1.0)  # Deeper scenes boost atmosphere
+        elif prompt.category == PromptCategory.DRUMS and avg_depth < 0.3:
+            intensity *= 1.15  # Close-up scenes boost drums
+            
+        # Priority weighting
+        priority_multiplier = 1.0 + (prompt.priority - 1) * 0.2
+        intensity *= priority_multiplier
         
         # Apply trigger strength
-        intensity *= (0.3 + trigger_strength * 1.4)
+        intensity *= (0.2 + trigger_strength * 1.3)
         
         # Clamp to prompt's intensity range
         min_intensity, max_intensity = prompt.intensity_range
@@ -803,29 +966,41 @@ Guidelines:
         return intensity
 
     def _select_dynamic_prompts(self, analysis: Dict) -> List[types.WeightedPrompt]:
-        """Select and weight dynamic prompts based on current context"""
+        """SMART dynamic prompt selection with HARD LIMITS"""
         if not self.dynamic_prompt_pools:
             return []
         
         current_time = time.time()
-        triggers = self._analyze_context_triggers(analysis)
+        
+        # CRITICAL: Check motion threshold before processing
+        current_motion = analysis.get('motion', 0.0)
+        if current_motion < MOTION_UPDATE_THRESHOLD:
+            print(f"Motion too low ({current_motion:.3f} < {MOTION_UPDATE_THRESHOLD}), using minimal prompts")
+            # Return minimal prompts for low motion
+            if hasattr(self, '_last_low_motion_prompts'):
+                return self._last_low_motion_prompts
+            else:
+                minimal_prompts = [
+                    types.WeightedPrompt(text="ambient pad", weight=1.0),
+                    types.WeightedPrompt(text="soft texture", weight=0.6)
+                ]
+                self._last_low_motion_prompts = minimal_prompts
+                return minimal_prompts
+        
+        # Get intelligent triggers
+        triggers = self.trigger_engine.generate_intelligent_triggers(analysis)
         selected_prompts = []
         
-        # Update motion window
-        self.motion_window.append(analysis.get('motion', 0.0))
-        if len(self.motion_window) > 20:
-            self.motion_window.pop(0)
+        print(f"Active triggers: {sorted(list(triggers))}")
         
-        print(f"Active triggers: {triggers}")
+        # Collect all candidates with their scores
+        all_candidates = []
         
-        # Process each category
         for category, prompts in self.dynamic_prompt_pools.items():
-            category_selections = []
-            
             for prompt in prompts:
-                # Check cooldown
+                # Check cooldown - INCREASED COOLDOWN
                 last_activation = self.prompt_history.get(prompt.text, 0)
-                if current_time - last_activation < prompt.cooldown:
+                if current_time - last_activation < max(prompt.cooldown, 3.0):  # MINIMUM 3 seconds
                     continue
                 
                 # Check if triggers match
@@ -833,29 +1008,80 @@ Guidelines:
                 if not matching_triggers:
                     continue
                 
-                # Calculate relevance score
+                # Calculate comprehensive score
                 trigger_score = len(matching_triggers) / len(prompt.triggers)
                 intensity = self._calculate_dynamic_intensity(analysis, prompt, triggers)
-                relevance_score = trigger_score * intensity
                 
-                category_selections.append((prompt, relevance_score, intensity))
-            
-            # Sort by relevance and select best ones for this category
-            category_selections.sort(key=lambda x: x[1], reverse=True)
-            max_concurrent = self.max_concurrent_prompts.get(category, 2)
-            
-            for prompt, relevance_score, intensity in category_selections[:max_concurrent]:
-                if relevance_score > 0.3:  # Minimum relevance threshold
-                    final_weight = prompt.base_weight * intensity
-                    selected_prompts.append(types.WeightedPrompt(
-                        text=prompt.text,
-                        weight=final_weight
-                    ))
+                # HIGHER QUALITY THRESHOLD
+                if intensity > 0.6:  # INCREASED from 0.4 to 0.6
+                    # Enhanced scoring with category priority
+                    category_weight = self.category_priorities.get(category, 1.0)
+                    priority_bonus = prompt.priority * 0.4  # INCREASED bonus
+                    final_score = trigger_score * intensity * category_weight + priority_bonus
                     
-                    # Update prompt history
-                    self.prompt_history[prompt.text] = current_time
+                    all_candidates.append({
+                        'prompt': prompt,
+                        'category': category,
+                        'score': final_score,
+                        'intensity': intensity,
+                        'trigger_score': trigger_score
+                    })
+        
+        # Sort by score and select BEST ones per category
+        all_candidates.sort(key=lambda x: x['score'], reverse=True)
+        
+        # SMART SELECTION WITH HARD LIMITS
+        category_selections = {cat: [] for cat in PromptCategory}
+        total_selected = 0
+        
+        # PRIORITY ORDER: Essential elements first
+        priority_categories = [
+            PromptCategory.DRUMS,
+            PromptCategory.BASS,
+            PromptCategory.RHYTHMIC,
+            PromptCategory.MELODIC,
+            PromptCategory.TRANSITION,
+            PromptCategory.ATMOSPHERIC,
+            PromptCategory.HARMONIC,
+            PromptCategory.PERCUSSIVE,
+            PromptCategory.TEXTURAL
+        ]
+        
+        # Select by priority categories first
+        for priority_cat in priority_categories:
+            if total_selected >= self.MAX_TOTAL_DYNAMIC_PROMPTS:
+                break
+                
+            max_concurrent = self.max_concurrent_prompts.get(priority_cat, 1)
+            cat_candidates = [c for c in all_candidates if c['category'] == priority_cat]
+            
+            for candidate in cat_candidates[:max_concurrent]:
+                if total_selected >= self.MAX_TOTAL_DYNAMIC_PROMPTS:
+                    break
                     
-                    print(f"Selected {category.value}: {prompt.text} (weight: {final_weight:.2f}, relevance: {relevance_score:.2f})")
+                if candidate['score'] > 1.0:  # HIGHER THRESHOLD for quality
+                    category_selections[priority_cat].append(candidate)
+                    total_selected += 1
+        
+        print(f"Selected {total_selected} total dynamic prompts (max: {self.MAX_TOTAL_DYNAMIC_PROMPTS})")
+        
+        # Convert to final prompts
+        for category, candidates in category_selections.items():
+            for candidate in candidates:
+                prompt = candidate['prompt']
+                intensity = candidate['intensity']
+                final_weight = prompt.base_weight * intensity
+                
+                selected_prompts.append(types.WeightedPrompt(
+                    text=prompt.text,
+                    weight=final_weight
+                ))
+                
+                # Update prompt history
+                self.prompt_history[prompt.text] = current_time
+                
+                print(f"✓ {category.value}: {prompt.text} "
+                      f"(weight: {final_weight:.2f}, score: {candidate['score']:.2f})")
         
         # Store current dynamic prompts for display
         self.current_dynamic_prompts = selected_prompts
@@ -863,7 +1089,7 @@ Guidelines:
         return selected_prompts
 
     async def generate_prompts(self, analysis: Dict, is_video: bool) -> Tuple[List[types.WeightedPrompt], Dict]:
-        """Main method to generate prompts - handles both base prompt generation and dynamic updates"""
+        """Main method to generate prompts with enhanced logic"""
         config_updates = {}
         
         # Phase 1: Collect initial data and generate base prompts + dynamic pools
@@ -907,31 +1133,55 @@ Guidelines:
         dynamic_prompts = self._select_dynamic_prompts(analysis)
         all_prompts.extend(dynamic_prompts)
         
-        # Update configuration based on current conditions
+        # Enhanced configuration updates based on analysis
         if is_video:
+            # Motion-based updates with smoothing
             motion = analysis.get('motion', 0)
-            brightness = analysis.get('brightness', 'medium')
-            
-            # Smooth motion-based density adjustment
-            if len(self.motion_window) > 5:
-                smoothed_motion = np.mean(self.motion_window[-5:])
-                base_density = 0.5
-                motion_adjustment = smoothed_motion * 0.3
-                config_updates['density'] = max(0.2, min(0.9, base_density + motion_adjustment))
+            if motion >= MOTION_UPDATE_THRESHOLD:  # Only update if motion is significant
+                # Enhanced motion response
+                motion_energy = self.trigger_engine.calculate_energy_level(analysis)
+                base_density = 0.45
+                
+                # More sophisticated density calculation
+                energy_factor = motion_energy.get('combined_energy', motion)
+                density_adjustment = energy_factor * 0.35
+                config_updates['density'] = max(0.15, min(0.85, base_density + density_adjustment))
+                
+                # BPM adjustments based on energy
+                if hasattr(self, 'base_bpm'):
+                    bpm_adjustment = int(energy_factor * 25)
+                    config_updates['bpm'] = max(80, min(180, self.base_bpm + bpm_adjustment))
             
             # Brightness-based adjustments
-            if brightness == "dark":
-                config_updates['brightness'] = 1.4
-            elif brightness == "bright":
-                config_updates['brightness'] = 1.8
-            else:
-                config_updates['brightness'] = 1.6
+            brightness = analysis.get('brightness', 'medium')
+            brightness_map = {
+                'dark': 1.2,
+                'dim': 1.4,
+                'medium': 1.6,
+                'bright': 1.9
+            }
+            config_updates['brightness'] = brightness_map.get(brightness, 1.6)
+            
+            # Depth-based adjustments
+            depth_info = analysis.get('depth', {})
+            avg_depth = depth_info.get('avg_depth', 0.5)
+            if avg_depth > 0.7:  # Deep scenes
+                config_updates['guidance'] = 4.5  # More atmospheric guidance
+            elif avg_depth < 0.3:  # Shallow/close scenes
+                config_updates['guidance'] = 5.5  # More focused guidance
         
         return all_prompts, config_updates
 
     def get_prompt_status(self) -> Dict:
-        """Get current status of prompt generation system"""
+        """Get current status of the enhanced prompt generation system"""
         active_categories = {cat.value: len(prompts) for cat, prompts in self.dynamic_prompt_pools.items()}
+        
+        # Enhanced status information
+        trigger_stats = {
+            'motion_history_length': len(self.trigger_engine.motion_history),
+            'energy_accumulator': self.trigger_engine.energy_accumulator,
+            'active_cooldowns': len(self.trigger_engine.trigger_cooldowns)
+        }
         
         return {
             'base_prompts_generated': self.base_prompts_generated,
@@ -940,44 +1190,78 @@ Guidelines:
             'total_dynamic_prompts': sum(len(prompts) for prompts in self.dynamic_prompt_pools.values()),
             'num_current_dynamic': len(self.current_dynamic_prompts),
             'analysis_frames_collected': len(self.initial_analysis_data),
-            'system_ready': self.base_prompts_generated and bool(self.dynamic_prompt_pools)
+            'system_ready': self.base_prompts_generated and bool(self.dynamic_prompt_pools),
+            'trigger_engine_stats': trigger_stats,
+            'motion_threshold': MOTION_UPDATE_THRESHOLD
         }
 
     def _fallback_base_config(self, aggregated_data: Dict) -> types.LiveMusicGenerationConfig:
-        """Fallback configuration if AI generation fails"""
+        """Enhanced fallback configuration"""
         avg_motion = aggregated_data.get('avg_motion', 0.5)
         
-        return types.LiveMusicGenerationConfig(
-            bpm=int(100 + avg_motion * 60),  # 100-160 BPM based on motion
+        config = types.LiveMusicGenerationConfig(
+            bpm=int(100 + avg_motion * 60),
             scale=types.Scale.C_MAJOR_A_MINOR,
             density=0.4 + avg_motion * 0.3,
             brightness=1.6,
             guidance=5.0
         )
+        
+        # Store base BPM for later adjustments
+        self.base_bpm = config.bpm
+        return config
 
     def _fallback_base_prompts(self, aggregated_data: Dict) -> List[types.WeightedPrompt]:
-        """Fallback base prompts if AI generation fails"""
+        """Enhanced fallback base prompts with REDUCED dynamic pools"""
         prompts = [
-            types.WeightedPrompt(text="Ambient", weight=2.0),
-            types.WeightedPrompt(text="Chill", weight=1.5),
-            types.WeightedPrompt(text="Guitar", weight=1.8)
+            types.WeightedPrompt(text="Electronic", weight=2.2),
+            types.WeightedPrompt(text="Ambient", weight=1.8),
+            types.WeightedPrompt(text="Chill", weight=1.5)
         ]
         
-        # Add simple dynamic pool as fallback
+        # REDUCED fallback dynamic pools - FEWER OPTIONS
         self.dynamic_prompt_pools = {
             PromptCategory.RHYTHMIC: [
-                DynamicPrompt("kick", PromptCategory.RHYTHMIC, 2.0, ["high_motion", "beat_sync"], (1.0, 3.0)),
-                DynamicPrompt("snare", PromptCategory.RHYTHMIC, 1.5, ["medium_motion", "beat_sync"], (0.8, 2.5))
+                DynamicPrompt("kick drum", PromptCategory.RHYTHMIC, 2.5, 
+                            ["high_motion", "beat_sync"], (1.0, 3.0), priority=3, cooldown=2.0),
+                DynamicPrompt("snare pattern", PromptCategory.RHYTHMIC, 2.0, 
+                            ["high_motion", "beat_emphasis"], (0.8, 2.5), priority=2, cooldown=3.0)
+            ],
+            PromptCategory.BASS: [
+                DynamicPrompt("sub bass", PromptCategory.BASS, 2.8, 
+                            ["high_motion", "energy_spike"], (1.2, 3.2), priority=3, cooldown=4.0),
+                DynamicPrompt("bass hit", PromptCategory.BASS, 2.2, 
+                            ["scene_change", "high_energy"], (0.9, 2.8), priority=2, cooldown=5.0)
+            ],
+            PromptCategory.MELODIC: [
+                DynamicPrompt("lead synth", PromptCategory.MELODIC, 2.0, 
+                            ["high_motion", "bright_scene"], (1.0, 2.5), priority=2, cooldown=4.0),
+                DynamicPrompt("arp sequence", PromptCategory.MELODIC, 1.8, 
+                            ["medium_motion"], (0.8, 2.2), priority=1, cooldown=3.0)
             ],
             PromptCategory.ATMOSPHERIC: [
-                DynamicPrompt("reverb", PromptCategory.ATMOSPHERIC, 1.8, ["deep_scene", "calm_moment"], (0.8, 2.0))
+                DynamicPrompt("reverb wash", PromptCategory.ATMOSPHERIC, 1.8, 
+                            ["calm_scene", "dark_scene"], (0.8, 2.0), priority=1, cooldown=6.0)
+            ],
+            PromptCategory.DRUMS: [
+                DynamicPrompt("kick punch", PromptCategory.DRUMS, 3.0, 
+                            ["high_motion", "beat_emphasis"], (1.0, 3.8), priority=3, cooldown=2.0),
+                DynamicPrompt("hi-hat groove", PromptCategory.DRUMS, 2.0, 
+                            ["beat_sync"], (0.6, 2.5), priority=2, cooldown=3.0)
+            ],
+            PromptCategory.TRANSITION: [
+                DynamicPrompt("sweep build", PromptCategory.TRANSITION, 3.5, 
+                            ["dramatic_shift"], (2.0, 4.0), 
+                            max_duration=4.0, cooldown=12.0, priority=3)
             ]
         }
         
         return prompts
 
+# Rest of the code remains the same for live_camera_processing and other functions...
+
 async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
-    """Process live camera feed and generate adaptive music"""
+    """Process live camera feed and generate adaptive music - Enhanced version"""
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
@@ -1031,10 +1315,11 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                     # Set initial base prompts and apply config updates
                     await session.set_weighted_prompts(prompts=base_prompts)
                     
-                    # Apply initial config updates
+                    # Apply initial config updates and store base BPM
                     if config_updates:
                         for attr, value in config_updates.items():
                             setattr(config, attr, value)
+                        prompt_generator.base_bpm = config.bpm  # Store for later adjustments
                         await session.set_music_generation_config(config=config)
                     
                     print(f"Base prompts set: {len(base_prompts)} prompts")
@@ -1044,7 +1329,7 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
 
             # Start playback after base prompts are set
             await session.play()
-            print("Playback started")
+            print("Playback started with enhanced trigger system")
             
             async def receive_audio():
                 chunks_count = 0
@@ -1078,40 +1363,67 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                     analysis = media_analyzer.analyze_media(frame, is_video=True)
                     current_time = time.time()
                     
-                    # Update prompts and config during live processing
-                    if current_time - last_update_time > 4.0:
+                    # Enhanced update logic with motion threshold check
+                    if current_time - last_update_time > 3.0:  # Reduced update frequency
                         # Generate combined prompts (base + dynamic)
                         all_prompts, config_updates = await prompt_generator.generate_prompts(
                             analysis, is_video=True)
                         
-                        # Update configuration if needed
-                        config_changed = False
-                        if config_updates:
-                            for key, value in config_updates.items():
-                                if hasattr(current_config, key):
-                                    setattr(current_config, key, value)
-                                    config_changed = True
+                        # Only update if there are changes and motion is sufficient
+                        should_update = (config_updates or 
+                                       len(prompt_generator.current_dynamic_prompts) > 0)
+                        
+                        if should_update:
+                            # Update configuration if needed
+                            config_changed = False
+                            if config_updates:
+                                for key, value in config_updates.items():
+                                    if hasattr(current_config, key):
+                                        old_value = getattr(current_config, key)
+                                        if abs(old_value - value) > 0.05 if isinstance(value, float) else old_value != value:
+                                            setattr(current_config, key, value)
+                                            config_changed = True
+                                
+                                if config_changed:
+                                    await session.set_music_generation_config(config=current_config)
+                                    print("Updated config:", {k: v for k, v in config_updates.items()})
                             
-                            if config_changed:
-                                await session.set_music_generation_config(config=current_config)
-                                print("Updated config:", config_updates)
-                        
-                        # Update prompts with combined base + dynamic
-                        print("\n=== CURRENT PROMPTS ===")
-                        print("Base Prompts:")
-                        for i, prompt in enumerate(base_prompts, 1):
-                            print(f"{i}. [BASE] {prompt.text} (weight: {prompt.weight:.2f})")
-                        print("\nDynamic Prompts:")
-                        for i, prompt in enumerate(prompt_generator.current_dynamic_prompts, 1):
-                            print(f"{i}. [DYNAMIC] {prompt.text} (weight: {prompt.weight:.2f})")
-                        print("=" * 30)
-                        
-                        await session.set_weighted_prompts(prompts=all_prompts)
-                        last_update_time = current_time
+                            # Enhanced prompt display
+                            print("\n" + "="*50)
+                            print("🎵 ENHANCED MUSIC SYSTEM STATUS 🎵")
+                            print("="*50)
+                            
+                            # Show motion threshold status
+                            current_motion = analysis.get('motion', 0.0)
+                            motion_status = "✅ ACTIVE" if current_motion >= MOTION_UPDATE_THRESHOLD else "⏸️  PAUSED"
+                            print(f"Motion: {current_motion:.3f} ({motion_status})")
+                            
+                            # Show trigger engine stats
+                            status = prompt_generator.get_prompt_status()
+                            trigger_stats = status.get('trigger_engine_stats', {})
+                            print(f"Energy Level: {trigger_stats.get('energy_accumulator', 0):.2f}")
+                            print(f"Active Cooldowns: {trigger_stats.get('active_cooldowns', 0)}")
+                            
+                            print("\n📻 Base Prompts (Constant):")
+                            for i, prompt in enumerate(base_prompts, 1):
+                                print(f"  {i}. {prompt.text} (weight: {prompt.weight:.2f})")
+                            
+                            if prompt_generator.current_dynamic_prompts:
+                                print("\n🎛️  Dynamic Prompts (Adaptive):")
+                                for i, prompt in enumerate(prompt_generator.current_dynamic_prompts, 1):
+                                    print(f"  {i}. {prompt.text} (weight: {prompt.weight:.2f})")
+                            else:
+                                print("\n🎛️  Dynamic Prompts: None active")
+                            
+                            print("="*50 + "\n")
+                            
+                            # Update prompts with combined base + dynamic
+                            await session.set_weighted_prompts(prompts=all_prompts)
+                            last_update_time = current_time
                     
-                    # Display analysis
+                    # Enhanced display
                     status = prompt_generator.get_prompt_status()
-                    display_analysis(analysis, analysis['frame_resized'], status)
+                    display_enhanced_analysis(analysis, analysis['frame_resized'], status)
                     
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
@@ -1132,13 +1444,19 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
         cv2.destroyAllWindows()
         print("Resources cleaned up")
 
-def display_analysis(analysis, frame, status):
-    """Enhanced display function showing dynamic prompt system status"""
+def display_enhanced_analysis(analysis, frame, status):
+    """Enhanced display function with improved trigger system information"""
     object_names = ', '.join([obj['name'] for obj in analysis['objects']]) if analysis['objects'] else 'None'
     depth_info = analysis.get('depth', {})
+    trigger_stats = status.get('trigger_engine_stats', {})
+    
+    # Motion status with threshold check
+    current_motion = analysis.get('motion', 0.0)
+    motion_status = "ACTIVE" if current_motion >= MOTION_UPDATE_THRESHOLD else "PAUSED"
+    motion_color = (0, 255, 0) if current_motion >= MOTION_UPDATE_THRESHOLD else (0, 165, 255)
     
     info = [
-        f"=== SCENE ANALYSIS ===",
+        f"=== ENHANCED SCENE ANALYSIS ===",
         f"Scene 1: {analysis['top_scenes'][0][0]} ({analysis['top_scenes'][0][1]*100:.1f}%)",
         f"Scene 2: {analysis['top_scenes'][1][0]} ({analysis['top_scenes'][1][1]*100:.1f}%)",
         f"Scene 3: {analysis['top_scenes'][2][0]} ({analysis['top_scenes'][2][1]*100:.1f}%)",
@@ -1146,12 +1464,18 @@ def display_analysis(analysis, frame, status):
         f"Lighting: {analysis['brightness']}",
         f"Weather: {analysis['weather']}",
         f"Time: {analysis['time_of_day']}",
-        f"Motion: {analysis['motion']:.2f}" if 'motion' in analysis else "Photo (no motion)",
+        f"Motion: {current_motion:.3f} ({motion_status})" if 'motion' in analysis else "Photo (no motion)",
+        f"Motion Threshold: {MOTION_UPDATE_THRESHOLD}",
         f"Colors: {' '.join(analysis['colors'])}",
         f"Depth: {depth_info.get('depth_profile', 'N/A')}",
         f"",
-        f"=== MUSIC SYSTEM STATUS ===",
+        f"=== INTELLIGENT TRIGGER ENGINE ===",
         f"Phase: {'COLLECTION' if not status['base_prompts_generated'] else 'LIVE PROCESSING'}",
+        f"Energy Level: {trigger_stats.get('energy_accumulator', 0):.2f}",
+        f"Motion History: {trigger_stats.get('motion_history_length', 0)} frames",
+        f"Active Cooldowns: {trigger_stats.get('active_cooldowns', 0)}",
+        f"",
+        f"=== MUSIC SYSTEM STATUS ===",
         f"Base Prompts: {status['num_base_prompts']}",
         f"Dynamic Pools: {sum(status['dynamic_pool_sizes'].values()) if 'dynamic_pool_sizes' in status else 0}",
         f"Active Dynamic: {status.get('num_current_dynamic', 0)}",
@@ -1160,40 +1484,61 @@ def display_analysis(analysis, frame, status):
         f"=== DYNAMIC CATEGORIES ===",
     ]
     
-    # Add dynamic pool status
+    # Add dynamic pool status with enhanced info
     if 'dynamic_pool_sizes' in status:
         for category, count in status['dynamic_pool_sizes'].items():
-            info.append(f"{category.capitalize()}: {count}")
+            info.append(f"{category.capitalize()}: {count} prompts")
     
     y = 20
     for line in info:
         if line.startswith("==="):
             color = (0, 255, 255)  # Yellow for headers
         elif line.startswith("Phase:"):
-            color = (0, 255, 0) if status['base_prompts_generated'] else (0, 165, 255)  # Green/Orange
+            color = (0, 255, 0) if status['base_prompts_generated'] else (0, 165, 255)
         elif line.startswith("System Ready:"):
-            color = (0, 255, 0) if status.get('system_ready', False) else (0, 0, 255)  # Green/Red
+            color = (0, 255, 0) if status.get('system_ready', False) else (0, 0, 255)
+        elif line.startswith("Motion:") and 'motion' in analysis:
+            color = motion_color
+        elif line.startswith("Energy Level:"):
+            energy = trigger_stats.get('energy_accumulator', 0)
+            if energy > 0.7:
+                color = (0, 100, 255)  # Red for high energy
+            elif energy > 0.4:
+                color = (0, 255, 255)  # Yellow for medium energy
+            else:
+                color = (255, 255, 255)  # White for low energy
         else:
             color = (255, 255, 255)  # White for regular info
             
-        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-        y += 20
+        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        y += 18
     
-    # Show depth map if available
+    # Enhanced depth map display
     if 'depth' in analysis and 'depth_map' in analysis['depth']:
         depth_map = analysis['depth']['depth_map']
         depth_map = (depth_map * 255).astype(np.uint8)
         depth_map = cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
         depth_map = cv2.resize(depth_map, (frame.shape[1] // 4, frame.shape[0] // 4))
         
+        # Add border to depth map
+        cv2.rectangle(depth_map, (0, 0), (depth_map.shape[1]-1, depth_map.shape[0]-1), (255, 255, 255), 2)
+        
         # Overlay depth map on the frame
         frame[10:10+depth_map.shape[0], frame.shape[1]-depth_map.shape[1]-10:frame.shape[1]-10] = depth_map
+    
+    # Add motion visualization
+    if current_motion > 0:
+        # Draw motion bar
+        bar_width = int(current_motion * 200)
+        bar_color = motion_color
+        cv2.rectangle(frame, (10, frame.shape[0] - 30), (10 + bar_width, frame.shape[0] - 10), bar_color, -1)
+        cv2.rectangle(frame, (10, frame.shape[0] - 30), (210, frame.shape[0] - 10), (255, 255, 255), 2)
     
     cv2.imshow("Enhanced Adaptive Music System", frame)
     cv2.waitKey(1)
 
 async def start_live_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
-    """Wrapper for live camera processing"""
+    """Wrapper for enhanced live camera processing"""
     try:
         await live_camera_processing(broadcast_func)
         return {"status": "success"}

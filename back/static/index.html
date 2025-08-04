@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Video2Music Converter</title>
+		<title>Live Music Generator</title>
 		<style>
 			:root {
 				--primary-color: #4a00e0;
@@ -18,7 +18,7 @@
 
 			body {
 				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-				max-width: 900px;
+				max-width: 1200px;
 				margin: 0 auto;
 				padding: 20px;
 				background-color: var(--background-color);
@@ -85,6 +85,8 @@
 				cursor: pointer;
 				transition: all 0.3s ease;
 				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+				margin-right: 10px;
+				margin-bottom: 10px;
 			}
 
 			button:hover {
@@ -125,13 +127,29 @@
 				color: var(--primary-color);
 			}
 
-			.media-preview {
+			.video-container {
+				display: flex;
+				gap: 20px;
+				align-items: flex-start;
+				flex-wrap: wrap;
+			}
+
+			.video-preview {
+				flex: 1;
+				min-width: 320px;
+			}
+
+			.video-controls {
+				flex: 1;
+				min-width: 300px;
+			}
+
+			#videoPreview {
 				width: 100%;
-				max-height: 400px;
-				margin-top: 20px;
+				max-width: 480px;
+				border: 2px solid #ddd;
 				border-radius: 8px;
-				background-color: #000;
-				display: none;
+				background: #000;
 			}
 
 			.audio-container {
@@ -147,43 +165,30 @@
 				overflow: hidden;
 			}
 
-			.file-input-container {
-				margin-bottom: 20px;
-			}
-
-			.file-input-label {
-				display: block;
-				margin-bottom: 8px;
-				font-weight: 500;
-				color: var(--text-light);
-			}
-
-			input[type='file'] {
-				width: 100%;
-				padding: 10px;
-				border: 1px solid #ddd;
-				border-radius: 6px;
-				background-color: #f9f9f9;
-			}
-
-			.progress-container {
-				width: 100%;
-				background-color: #f1f1f1;
-				border-radius: 6px;
+			.stats-grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+				gap: 15px;
 				margin-top: 15px;
-				overflow: hidden;
-				display: none;
 			}
 
-			.progress-bar {
-				height: 10px;
-				background: linear-gradient(
-					to right,
-					var(--primary-color),
-					var(--secondary-color)
-				);
-				width: 0%;
-				transition: width 0.3s ease;
+			.stat-item {
+				background: rgba(74, 0, 224, 0.05);
+				padding: 10px;
+				border-radius: 6px;
+				text-align: center;
+			}
+
+			.stat-value {
+				font-size: 1.2em;
+				font-weight: bold;
+				color: var(--primary-color);
+			}
+
+			.stat-label {
+				font-size: 0.9em;
+				color: var(--text-light);
+				margin-top: 5px;
 			}
 
 			@media (max-width: 768px) {
@@ -198,46 +203,87 @@
 				h1 {
 					font-size: 1.8rem;
 				}
+
+				.video-container {
+					flex-direction: column;
+				}
 			}
 		</style>
 	</head>
 	<body>
 		<div class="container">
-			<h1>Video2Music Converter</h1>
+			<h1>Live Music Generator - Client Video</h1>
 
 			<div class="card">
-				<h2>Upload Media</h2>
-				<form id="uploadForm" enctype="multipart/form-data">
-					<div class="file-input-container">
-						<label class="file-input-label" for="fileInput"
-							>Select media file (image or video):</label
+				<h2>Video Input</h2>
+				<div class="video-container">
+					<div class="video-preview">
+						<video
+							id="videoPreview"
+							autoplay
+							muted
+							playsinline
+							style="display: none"
+						></video>
+						<div
+							id="videoPlaceholder"
+							style="
+								width: 100%;
+								max-width: 480px;
+								height: 360px;
+								background: #333;
+								display: flex;
+								align-items: center;
+								justify-content: center;
+								color: white;
+								border-radius: 8px;
+								font-size: 18px;
+							"
 						>
-						<input
-							type="file"
-							name="file"
-							id="fileInput"
-							accept="image/*,video/*"
-							required
-						/>
+							Click "Start Camera" to begin
+						</div>
+						<canvas
+							id="captureCanvas"
+							style="display: none"
+						></canvas>
 					</div>
-					<button type="submit" id="uploadBtn">Process Media</button>
-					<div class="progress-container" id="uploadProgress">
-						<div class="progress-bar" id="progressBar"></div>
-					</div>
-					<div class="status" id="uploadStatus"></div>
-				</form>
-				<video id="videoPreview" class="media-preview" controls></video>
-				<img
-					id="imagePreview"
-					class="media-preview"
-					alt="Image preview"
-				/>
-			</div>
+					<div class="video-controls">
+						<button id="startCameraBtn">Start Camera</button>
+						<button id="stopCameraBtn" disabled>Stop Camera</button>
+						<button id="liveBtn" disabled>
+							Start Music Generation
+						</button>
+						<button id="stopMusicBtn" disabled>Stop Music</button>
 
-			<div class="card">
-				<h2>Live Processing</h2>
-				<button id="liveBtn">Start Live Camera Processing</button>
-				<div class="status" id="liveStatus"></div>
+						<div class="status" id="cameraStatus">
+							Camera not started
+						</div>
+						<div class="status" id="liveStatus">
+							Music generation not started
+						</div>
+
+						<div
+							class="stats-grid"
+							id="videoStats"
+							style="display: none"
+						>
+							<div class="stat-item">
+								<div class="stat-value" id="fpsCounter">0</div>
+								<div class="stat-label">FPS</div>
+							</div>
+							<div class="stat-item">
+								<div class="stat-value" id="framesSent">0</div>
+								<div class="stat-label">Frames Sent</div>
+							</div>
+							<div class="stat-item">
+								<div class="stat-value" id="videoStatus">
+									Disconnected
+								</div>
+								<div class="stat-label">Video Stream</div>
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
 
 			<div class="card audio-container">
@@ -254,27 +300,37 @@
 			// DOM Elements
 			const audioPlayer = document.getElementById('audioPlayer')
 			const connectionStatus = document.getElementById('connectionStatus')
-			const uploadStatus = document.getElementById('uploadStatus')
+			const cameraStatus = document.getElementById('cameraStatus')
 			const liveStatus = document.getElementById('liveStatus')
-			const uploadBtn = document.getElementById('uploadBtn')
 			const liveBtn = document.getElementById('liveBtn')
-			const videoPreview = document.getElementById('videoPreview')
-			const imagePreview = document.getElementById('imagePreview')
-			const fileInput = document.getElementById('fileInput')
+			const startCameraBtn = document.getElementById('startCameraBtn')
+			const stopCameraBtn = document.getElementById('stopCameraBtn')
+			const stopMusicBtn = document.getElementById('stopMusicBtn')
 			const audioVisualizer = document.getElementById('audioVisualizer')
-			const uploadProgress = document.getElementById('uploadProgress')
-			const progressBar = document.getElementById('progressBar')
+			const videoPreview = document.getElementById('videoPreview')
+			const videoPlaceholder = document.getElementById('videoPlaceholder')
+			const captureCanvas = document.getElementById('captureCanvas')
+			const videoStats = document.getElementById('videoStats')
 
-			// Audio variables
+			// Video and audio variables
 			let audioContext
 			let analyser
 			let audioSource
 			let visualizationInterval
-			let ws
+			let audioWs
+			let videoWs
+			let mediaStream = null
+			let captureContext = null
+			let frameInterval = null
 			let reconnectAttempts = 0
 			const maxReconnectAttempts = 5
 			let keepAliveInterval
-			const sampleRate = 44100 // Default sample rate
+			const sampleRate = 48000 // Matching OUTPUT_RATE
+
+			// Statistics
+			let framesSentCount = 0
+			let lastFpsTime = Date.now()
+			let fpsFrameCount = 0
 
 			// Initialize Web Audio API
 			function initAudioContext() {
@@ -365,13 +421,219 @@
 				}, 60)
 			}
 
-			// WebSocket connection management
-			function connectWebSocket() {
-				if (ws) {
+			// Camera initialization
+			async function initializeCamera() {
+				try {
+					updateStatus(
+						cameraStatus,
+						'Starting camera...',
+						'processing'
+					)
+
+					// Stop existing stream if any
+					if (mediaStream) {
+						mediaStream.getTracks().forEach((track) => track.stop())
+					}
+
+					// Request camera access
+					mediaStream = await navigator.mediaDevices.getUserMedia({
+						video: {
+							width: { ideal: 640 },
+							height: { ideal: 480 },
+							frameRate: { ideal: 15 },
+							facingMode: { exact: 'environment' },
+						},
+					})
+
+					// Setup video element
+					videoPreview.srcObject = mediaStream
+					videoPreview.style.display = 'block'
+					videoPlaceholder.style.display = 'none'
+
+					// Setup canvas for frame capture
+					captureCanvas.width = 640
+					captureCanvas.height = 480
+					captureContext = captureCanvas.getContext('2d')
+
+					// Update UI
+					startCameraBtn.disabled = true
+					stopCameraBtn.disabled = false
+					liveBtn.disabled = false
+
+					updateStatus(cameraStatus, 'Camera ready', 'connected')
+					videoStats.style.display = 'grid'
+
+					console.log('Camera initialized successfully')
+				} catch (error) {
+					console.error('Camera initialization failed:', error)
+					updateStatus(
+						cameraStatus,
+						'Camera access failed: ' + error.message,
+						'error'
+					)
+
+					// Reset UI on error
+					startCameraBtn.disabled = false
+					stopCameraBtn.disabled = true
+					liveBtn.disabled = true
+				}
+			}
+
+			// Stop camera
+			function stopCamera() {
+				if (mediaStream) {
+					mediaStream.getTracks().forEach((track) => track.stop())
+					mediaStream = null
+				}
+
+				if (frameInterval) {
+					clearInterval(frameInterval)
+					frameInterval = null
+				}
+
+				if (videoWs) {
+					videoWs.close()
+					videoWs = null
+				}
+
+				videoPreview.srcObject = null
+				videoPreview.style.display = 'none'
+				videoPlaceholder.style.display = 'flex'
+
+				startCameraBtn.disabled = false
+				stopCameraBtn.disabled = true
+				liveBtn.disabled = true
+				stopMusicBtn.disabled = true
+
+				updateStatus(cameraStatus, 'Camera stopped', 'processing')
+				videoStats.style.display = 'none'
+
+				// Reset stats
+				framesSentCount = 0
+				fpsFrameCount = 0
+				document.getElementById('framesSent').textContent = '0'
+				document.getElementById('fpsCounter').textContent = '0'
+				document.getElementById('videoStatus').textContent =
+					'Disconnected'
+			}
+
+			// Video WebSocket connection
+			function connectVideoWebSocket() {
+				const protocol =
+					window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+				const host = window.location.host
+				videoWs = new WebSocket(`${protocol}//${host}/ws/video`)
+
+				videoWs.onopen = () => {
+					console.log('Video WebSocket connected')
+					document.getElementById('videoStatus').textContent =
+						'Connected'
+					startVideoStreaming()
+				}
+
+				videoWs.onmessage = (event) => {
 					try {
-						ws.close()
+						const data = JSON.parse(event.data)
+						if (data.status === 'frame_received') {
+							// Frame acknowledged by server
+							console.log('Frame acknowledged')
+						} else if (data.error) {
+							console.error('Server error:', data.error)
+						}
 					} catch (e) {
-						console.log('Error closing previous connection:', e)
+						console.log('Non-JSON message:', event.data)
+					}
+				}
+
+				videoWs.onclose = (event) => {
+					console.log('Video WebSocket closed:', event.code)
+					document.getElementById('videoStatus').textContent =
+						'Disconnected'
+
+					if (frameInterval) {
+						clearInterval(frameInterval)
+						frameInterval = null
+					}
+				}
+
+				videoWs.onerror = (error) => {
+					console.error('Video WebSocket error:', error)
+					document.getElementById('videoStatus').textContent = 'Error'
+				}
+			}
+
+			// Start video streaming
+			function startVideoStreaming() {
+				if (frameInterval) {
+					clearInterval(frameInterval)
+				}
+
+				frameInterval = setInterval(() => {
+					if (
+						videoPreview &&
+						captureContext &&
+						videoWs &&
+						videoWs.readyState === WebSocket.OPEN
+					) {
+						try {
+							// Draw current video frame to canvas
+							captureContext.drawImage(
+								videoPreview,
+								0,
+								0,
+								640,
+								480
+							)
+
+							// Convert to base64 JPEG
+							const frameData = captureCanvas.toDataURL(
+								'image/jpeg',
+								0.8
+							)
+
+							// Send frame to server
+							videoWs.send(
+								JSON.stringify({
+									frame: frameData,
+									timestamp: Date.now(),
+								})
+							)
+
+							// Update statistics
+							framesSentCount++
+							fpsFrameCount++
+							document.getElementById('framesSent').textContent =
+								framesSentCount
+
+							// Calculate FPS
+							const now = Date.now()
+							if (now - lastFpsTime >= 1000) {
+								const fps = Math.round(
+									(fpsFrameCount * 1000) / (now - lastFpsTime)
+								)
+								document.getElementById(
+									'fpsCounter'
+								).textContent = fps
+								lastFpsTime = now
+								fpsFrameCount = 0
+							}
+						} catch (error) {
+							console.error('Error capturing frame:', error)
+						}
+					}
+				}, 100) // Send frame every 100ms (10 FPS)
+			}
+
+			// Audio WebSocket connection management
+			function connectAudioWebSocket() {
+				if (audioWs) {
+					try {
+						audioWs.close()
+					} catch (e) {
+						console.log(
+							'Error closing previous audio connection:',
+							e
+						)
 					}
 				}
 
@@ -384,11 +646,11 @@
 				const protocol =
 					window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 				const host = window.location.host
-				ws = new WebSocket(`${protocol}//${host}/ws/audio`)
+				audioWs = new WebSocket(`${protocol}//${host}/ws/audio`)
 
-				ws.binaryType = 'arraybuffer'
+				audioWs.binaryType = 'arraybuffer'
 
-				ws.onopen = () => {
+				audioWs.onopen = () => {
 					reconnectAttempts = 0
 					updateStatus(
 						connectionStatus,
@@ -397,10 +659,10 @@
 					)
 					initAudioContext()
 					startKeepAlive()
-					console.log('WebSocket connection established')
+					console.log('Audio WebSocket connection established')
 				}
 
-				ws.onmessage = async (event) => {
+				audioWs.onmessage = async (event) => {
 					if (event.data instanceof ArrayBuffer) {
 						try {
 							const audioContext = initAudioContext()
@@ -446,27 +708,27 @@
 						}
 					} else if (typeof event.data === 'string') {
 						if (event.data === 'pong') {
-							console.log('Keepalive received')
+							console.log('Audio keepalive received')
 						} else {
 							console.log('Server message:', event.data)
 						}
 					}
 				}
 
-				ws.onclose = (event) => {
+				audioWs.onclose = (event) => {
 					stopKeepAlive()
 
 					if (event.code === 1000) {
 						updateStatus(
 							connectionStatus,
-							'Connection closed',
+							'Audio connection closed',
 							'processing'
 						)
 					} else {
 						const message =
 							event.code === 1006
-								? 'Connection failed'
-								: 'Connection closed'
+								? 'Audio connection failed'
+								: 'Audio connection closed'
 						updateStatus(
 							connectionStatus,
 							`${message} (code ${event.code}) - reconnecting...`,
@@ -479,20 +741,24 @@
 								1000 * reconnectAttempts,
 								5000
 							)
-							setTimeout(connectWebSocket, delay)
+							setTimeout(connectAudioWebSocket, delay)
 						} else {
 							updateStatus(
 								connectionStatus,
-								'Max reconnection attempts reached',
+								'Max audio reconnection attempts reached',
 								'error'
 							)
 						}
 					}
 				}
 
-				ws.onerror = (error) => {
-					console.error('WebSocket error:', error)
-					updateStatus(connectionStatus, 'Connection error', 'error')
+				audioWs.onerror = (error) => {
+					console.error('Audio WebSocket error:', error)
+					updateStatus(
+						connectionStatus,
+						'Audio connection error',
+						'error'
+					)
 				}
 			}
 
@@ -554,12 +820,12 @@
 			function startKeepAlive() {
 				stopKeepAlive()
 				keepAliveInterval = setInterval(() => {
-					if (ws && ws.readyState === WebSocket.OPEN) {
+					if (audioWs && audioWs.readyState === WebSocket.OPEN) {
 						try {
-							ws.send('ping')
-							console.log('Sent keepalive ping')
+							audioWs.send('ping')
+							console.log('Sent audio keepalive ping')
 						} catch (e) {
-							console.log('Keepalive send error:', e)
+							console.log('Audio keepalive send error:', e)
 						}
 					}
 				}, 20000) // Send ping every 20 seconds
@@ -578,119 +844,79 @@
 				element.className = 'status ' + type
 			}
 
-			// File input handling
-			fileInput.addEventListener('change', (e) => {
-				const file = fileInput.files[0]
-				if (!file) return
-
-				// Hide both previews first
-				videoPreview.style.display = 'none'
-				imagePreview.style.display = 'none'
-
-				if (file.type.startsWith('video/')) {
-					videoPreview.src = URL.createObjectURL(file)
-					videoPreview.style.display = 'block'
-				} else if (file.type.startsWith('image/')) {
-					imagePreview.src = URL.createObjectURL(file)
-					imagePreview.style.display = 'block'
-				}
-			})
-
-			// File upload handling
-			uploadForm.addEventListener('submit', async (e) => {
-				e.preventDefault()
-				const file = fileInput.files[0]
-				if (!file) return
-
-				uploadBtn.disabled = true
-				uploadProgress.style.display = 'block'
-				progressBar.style.width = '0%'
-				updateStatus(uploadStatus, 'Uploading...', 'processing')
-
-				try {
-					const formData = new FormData(uploadForm)
-					const xhr = new XMLHttpRequest()
-
-					xhr.upload.onprogress = (event) => {
-						if (event.lengthComputable) {
-							const percent = Math.round(
-								(event.loaded / event.total) * 100
-							)
-							progressBar.style.width = `${percent}%`
-						}
-					}
-
-					xhr.onload = () => {
-						if (xhr.status >= 200 && xhr.status < 300) {
-							const response = JSON.parse(xhr.responseText)
-							updateStatus(
-								uploadStatus,
-								response.message || 'Processing started',
-								'connected'
-							)
-						} else {
-							throw new Error(xhr.statusText || 'Upload failed')
-						}
-					}
-
-					xhr.onerror = () => {
-						throw new Error('Network error during upload')
-					}
-
-					xhr.open('POST', '/upload', true)
-					xhr.send(formData)
-				} catch (error) {
-					console.error('Upload error:', error)
-					updateStatus(
-						uploadStatus,
-						error.message || 'Upload failed',
-						'error'
-					)
-				} finally {
-					uploadBtn.disabled = false
-					setTimeout(() => {
-						uploadProgress.style.display = 'none'
-					}, 2000)
-				}
-			})
-
-			// Live processing
-			liveBtn.addEventListener('click', async () => {
+			// Start live music generation
+			async function startLiveProcessing() {
 				liveBtn.disabled = true
 				updateStatus(
 					liveStatus,
-					'Starting live processing...',
+					'Starting music generation...',
 					'processing'
 				)
 
 				try {
+					// Connect video WebSocket first
+					connectVideoWebSocket()
+
+					// Start music processing on server
 					const response = await fetch('/start-live', {
 						method: 'POST',
 					})
 
 					if (!response.ok) {
 						throw new Error(
-							(await response.text()) || 'Failed to start'
+							(await response.text()) ||
+								'Failed to start music generation'
 						)
 					}
 
 					const result = await response.json()
 					updateStatus(
 						liveStatus,
-						result.message || 'Live processing started',
+						result.message || 'Music generation started',
 						'connected'
 					)
+
+					stopMusicBtn.disabled = false
 				} catch (error) {
 					console.error('Live processing error:', error)
 					updateStatus(
 						liveStatus,
-						error.message || 'Failed to start',
+						error.message || 'Failed to start music generation',
 						'error'
 					)
-				} finally {
 					liveBtn.disabled = false
 				}
-			})
+			}
+
+			// Stop music generation
+			function stopMusicGeneration() {
+				if (videoWs) {
+					videoWs.close()
+					videoWs = null
+				}
+
+				if (frameInterval) {
+					clearInterval(frameInterval)
+					frameInterval = null
+				}
+
+				liveBtn.disabled = false
+				stopMusicBtn.disabled = true
+
+				updateStatus(
+					liveStatus,
+					'Music generation stopped',
+					'processing'
+				)
+				document.getElementById('videoStatus').textContent =
+					'Disconnected'
+			}
+
+			// Event listeners
+			startCameraBtn.addEventListener('click', initializeCamera)
+			stopCameraBtn.addEventListener('click', stopCamera)
+			liveBtn.addEventListener('click', startLiveProcessing)
+			stopMusicBtn.addEventListener('click', stopMusicGeneration)
 
 			// Initialize on DOM load
 			document.addEventListener('DOMContentLoaded', () => {
@@ -713,17 +939,32 @@
 					return
 				}
 
+				if (
+					!navigator.mediaDevices ||
+					!navigator.mediaDevices.getUserMedia
+				) {
+					updateStatus(
+						cameraStatus,
+						'Camera access not supported in this browser',
+						'error'
+					)
+					startCameraBtn.disabled = true
+					return
+				}
+
 				// Initialize audio context
 				initAudioContext()
 
-				// Connect WebSocket
-				connectWebSocket()
+				// Connect to audio WebSocket
+				connectAudioWebSocket()
 
 				// Handle page visibility changes
 				document.addEventListener('visibilitychange', () => {
 					if (document.visibilityState === 'visible') {
-						console.log('Page became visible, reconnecting...')
-						connectWebSocket()
+						console.log(
+							'Page became visible, reconnecting audio...'
+						)
+						connectAudioWebSocket()
 					} else {
 						console.log('Page hidden, cleaning up...')
 						stopKeepAlive()
@@ -734,14 +975,29 @@
 			// Clean up on window close
 			window.addEventListener('beforeunload', () => {
 				stopKeepAlive()
-				if (ws) {
-					ws.close()
+
+				if (audioWs) {
+					audioWs.close()
 				}
+
+				if (videoWs) {
+					videoWs.close()
+				}
+
+				if (mediaStream) {
+					mediaStream.getTracks().forEach((track) => track.stop())
+				}
+
 				if (audioSource) {
 					audioSource.stop()
 				}
+
 				if (visualizationInterval) {
 					clearInterval(visualizationInterval)
+				}
+
+				if (frameInterval) {
+					clearInterval(frameInterval)
 				}
 			})
 		</script>

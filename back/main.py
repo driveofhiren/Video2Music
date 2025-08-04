@@ -9,12 +9,14 @@ import asyncio
 from pathlib import Path
 # from final import process_upload, start_live_processing
 from final import start_live_processing
+from final import start_client_video_processing, update_frame_from_client
 import cv2
 import time
 from typing import Dict
 import base64
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocketDisconnect
+import json
 
 app = FastAPI()
 
@@ -31,38 +33,30 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="static")
 
-# Create uploads directory if not exists
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 # WebSocket connections management
 active_connections: Dict[str, WebSocket] = {}
+video_connections: Dict[str, WebSocket] = {}
+music_processing_task = None
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.post("/upload")
-async def handle_upload(file: UploadFile = File(...)):
-    # Save uploaded file
-    file_ext = Path(file.filename).suffix
-    file_id = str(uuid.uuid4())
-    file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
-    
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-    
-    # Determine if it's video or image
-    is_video = file.content_type.startswith("video/")
-    
-    # Process in background
-    asyncio.create_task(process_upload(file_path, is_video, broadcast_audio))
-    return {"message": "Processing started - audio will stream to connected clients"}
-
 @app.post("/start-live")
 async def handle_start_live():
-    asyncio.create_task(start_live_processing(broadcast_audio))
-    return {"message": "Live processing started"}
+    global music_processing_task
+    
+    # Cancel existing task if running
+    if music_processing_task and not music_processing_task.done():
+        music_processing_task.cancel()
+        try:
+            await music_processing_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Start new music processing task
+    music_processing_task = asyncio.create_task(start_client_video_processing(broadcast_audio))
+    return {"message": "Live processing started - waiting for video frames"}
 
 @app.websocket("/ws/audio")
 async def websocket_audio(websocket: WebSocket):
@@ -93,6 +87,53 @@ async def websocket_audio(websocket: WebSocket):
     finally:
         active_connections.pop(connection_id, None)
         print(f"Client {connection_id} disconnected")
+
+
+@app.websocket("/ws/video")
+async def websocket_video(websocket: WebSocket):
+    await websocket.accept()
+    connection_id = str(uuid.uuid4())
+    video_connections[connection_id] = websocket
+    print(f"Video client {connection_id} connected")
+    
+    try:
+        while True:
+            try:
+                # Receive frame data from client
+                data = await websocket.receive_text()
+                frame_data = json.loads(data)
+                
+                # Process the base64 encoded frame
+                if 'frame' in frame_data:
+                    # Extract base64 data (remove data:image/jpeg;base64, prefix)
+                    base64_data = frame_data['frame'].split(',')[1]
+                    
+                    # Decode base64 to bytes
+                    image_bytes = base64.b64decode(base64_data)
+                    
+                    # Update the current frame for processing
+                    await update_frame_from_client(image_bytes)
+                    
+                    # Optional: Send acknowledgment back to client
+                    await websocket.send_text(json.dumps({
+                        "status": "frame_received",
+                        "timestamp": frame_data.get('timestamp', time.time())
+                    }))
+                
+            except WebSocketDisconnect:
+                break
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                await websocket.send_text(json.dumps({"error": "Invalid JSON format"}))
+            except Exception as e:
+                print(f"Video processing error: {e}")
+                await websocket.send_text(json.dumps({"error": str(e)}))
+                
+    except Exception as e:
+        print(f"Video WebSocket error: {e}")
+    finally:
+        video_connections.pop(connection_id, None)
+        print(f"Video client {connection_id} disconnected")
 
 async def broadcast_audio(audio_data: bytes):
     if not active_connections:
@@ -134,3 +175,32 @@ async def broadcast_audio(audio_data: bytes):
             except:
                 pass
             active_connections.pop(connection_id, None)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown"""
+    global music_processing_task
+    
+    # Cancel music processing task
+    if music_processing_task and not music_processing_task.done():
+        music_processing_task.cancel()
+        try:
+            await music_processing_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Close all websocket connections
+    for websocket in list(active_connections.values()):
+        try:
+            await websocket.close()
+        except:
+            pass
+    
+    for websocket in list(video_connections.values()):
+        try:
+            await websocket.close()
+        except:
+            pass
+    
+    print("Application shutdown complete")
