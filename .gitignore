@@ -1,74 +1,57 @@
-# === Python Cache & Envs ===
+# === Python ===
 __pycache__/
 *.py[cod]
-*.so
-*.egg-info/
+*.pyo
+*.pyd
+
+# Virtual Environments
+venv/
 env/
 .venv/
-venv/
-video2music/
-cache/
 
-
-# === IDE / Editor ===
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-
-# === Logs & System Files ===
+# Byte-compiled / logs / temp
 *.log
-*.DS_Store
-Thumbs.db
-
-# === Model Weights / Checkpoints ===
-*.pt
-*.pth
-*.ckpt
-*.tar
-*.t7
-
-# === Temporary / Generated Files ===
 *.tmp
 *.bak
 *.swp
-*.~*
+*.swo
+*.DS_Store
+Thumbs.db
+
+# Python packages
+*.egg
+*.egg-info/
+dist/
+build/
+
+# === Checkpoints / Model Files ===
+*.pth
+*.pt
+*.ckpt
+*.t7
+*.tar
+
+# === Video / Audio Outputs ===
 *.mp4
 *.avi
+*.wav
+*.mp3
+*.flac
 
+# === FastAPI Static & Uploads ===
+uploads/
+cache/
+media2music/
 
-.cache/
-*.log
-*.tmp
-*.bak
+# === Dotenv files ===
+.env
+.env.local
+.env.*.local
 
-# === Audio Assets (large or generated) ===
-back/assets/*.wav
-back/assets/*.mp3
-back/assets/*.flac
-
-# === Frontend ===
+# === Frontend Build (if any) ===
 frontend/node_modules/
 frontend/dist/
 frontend/.env.local
-frontend/.env.development
-frontend/.env.production
 
-# === Output or Temp Directories ===
-outputs/
-frames/
-temp/
-recordings/
-results/
-back/video2music
-frontend/node_modules
-back/media2music
-backup/
-
-
-# === Secret or API Keys ===
-.env
-.env.*
-*.key
-*.pem
-*.token
+# === VSCode ===
+.vscode/
