@@ -13,6 +13,3 @@ sentence-transformers
 google-generativeai
 python-dotenv
 Pillow
-hashlib
-argparse
-dataclasses
