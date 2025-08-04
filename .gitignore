@@ -63,6 +63,7 @@ results/
 back/video2music
 frontend/node_modules
 back/media2music
+backup/
 
 
 # === Secret or API Keys ===
