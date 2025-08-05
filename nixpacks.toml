@@ -1,12 +1,12 @@
 [phases.setup]
-nixPkgs = ["python312Full", "python312Packages.venv"]
+nixPkgs = ["python312Full"]
 
 [phases.install]
 cmds = [
   "python -m venv venv",
   ". venv/bin/activate",
   "pip install --upgrade pip",
-  "pip install --no-cache-dir -r requirements.txt",
+  "pip install --no-cache-dir -r requirements.txt"
 ]
 
 [phases.start]
