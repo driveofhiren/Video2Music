@@ -16,6 +16,7 @@ from typing import Dict
 import base64
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocketDisconnect
+import uvicorn
 import json
 
 app = FastAPI()
@@ -204,3 +205,7 @@ async def shutdown_event():
             pass
     
     print("Application shutdown complete")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))  # 👈 important
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
