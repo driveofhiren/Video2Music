@@ -1,39 +1,32 @@
-# Use official Python 3.12 slim base image
-FROM python:3.12-slim
+FROM python:3.11-slim
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PORT=8080
+# Prevent Python from writing .pyc files and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# System-level dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
+    libxrender1 \
     libxext6 \
-    libxrender-dev \
+    ffmpeg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for caching
-COPY requirements.txt .
-
 # Install Python dependencies
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy project files
+# Copy your app code
 COPY . .
 
-# Expose the default port (Cloud Run uses 8080)
+# Cloud Run expects app on port 8080
 EXPOSE 8080
 
-# Start the FastAPI app using uvicorn
-# CMD ["uvicorn", "back.main:app", "--host=0.0.0.0", "--port=8080"]
+# Run using python main.py
 CMD ["python", "main.py"]
-
