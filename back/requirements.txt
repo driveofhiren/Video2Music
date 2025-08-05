@@ -10,6 +10,7 @@ torchvision
 scikit-learn
 ultralytics
 sentence-transformers
-google-generativeai
+# google-generativeai
 python-dotenv
 Pillow
+google-genai>=1.16.0
