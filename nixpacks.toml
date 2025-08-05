@@ -1,11 +1,10 @@
 [phases.setup]
-nixPkgs = ["python312", "pip"]
+nixPkgs = ["python312"]
 
 [phases.install]
 cmds = [
-  "pip install --upgrade pip",
-  "pip install --no-cache-dir -r requirements.txt"
+  "python -m venv venv && source venv/bin/activate && pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt"
 ]
 
 [phases.start]
-cmd = "uvicorn back.main:app --host=0.0.0.0 --port=${PORT:-8000}"
+cmd = "source venv/bin/activate && uvicorn back.main:app --host=0.0.0.0 --port=${PORT:-8000}"
