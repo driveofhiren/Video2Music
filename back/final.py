@@ -57,12 +57,16 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
     """Process video frames received from client and generate adaptive music"""
     global current_frame, frame_timestamp, no_frame_count
     
+
+    print("Starting client video processing...")
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
+    if not api_key:
+        print("ERROR: No LYRIA_API_KEY found in environment")
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
     prompt_generator = EnhancedMusicGenerator()
     
-    print("Starting client video processing...")
+    
     
     try:
         async with client.aio.live.music.connect(model=MODEL) as session:
