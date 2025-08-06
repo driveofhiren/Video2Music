@@ -14,3 +14,4 @@ sentence-transformers
 python-dotenv
 Pillow
 google-genai>=1.16.0
+timm
