@@ -4,1002 +4,140 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Live Music Generator</title>
-		<style>
-			:root {
-				--primary-color: #4a00e0;
-				--secondary-color: #8e2de2;
-				--success-color: #2e7d32;
-				--error-color: #c62828;
-				--background-color: #f5f5f5;
-				--card-bg: #ffffff;
-				--text-color: #333333;
-				--text-light: #666666;
-			}
-
-			body {
-				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-				max-width: 1200px;
-				margin: 0 auto;
-				padding: 20px;
-				background-color: var(--background-color);
-				color: var(--text-color);
-				line-height: 1.6;
-			}
-
-			.container {
-				display: flex;
-				flex-direction: column;
-				gap: 25px;
-			}
-
-			.card {
-				border-radius: 10px;
-				padding: 25px;
-				background-color: var(--card-bg);
-				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-				transition: transform 0.3s ease, box-shadow 0.3s ease;
-			}
-
-			.card:hover {
-				transform: translateY(-2px);
-				box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-			}
-
-			h1,
-			h2 {
-				color: var(--primary-color);
-				margin-bottom: 15px;
-			}
-
-			h1 {
-				font-size: 2.2rem;
-				text-align: center;
-				background: linear-gradient(
-					to right,
-					var(--primary-color),
-					var(--secondary-color)
-				);
-				-webkit-background-clip: text;
-				background-clip: text;
-				color: transparent;
-			}
-
-			h2 {
-				font-size: 1.5rem;
-				border-bottom: 2px solid var(--secondary-color);
-				padding-bottom: 8px;
-			}
-
-			button {
-				padding: 12px 20px;
-				background: linear-gradient(
-					to right,
-					var(--primary-color),
-					var(--secondary-color)
-				);
-				color: white;
-				border: none;
-				border-radius: 6px;
-				font-size: 16px;
-				font-weight: 500;
-				cursor: pointer;
-				transition: all 0.3s ease;
-				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-				margin-right: 10px;
-				margin-bottom: 10px;
-			}
-
-			button:hover {
-				transform: translateY(-2px);
-				box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-			}
-
-			button:disabled {
-				background: #cccccc;
-				transform: none;
-				box-shadow: none;
-				cursor: not-allowed;
-			}
-
-			.status {
-				margin-top: 15px;
-				padding: 12px;
-				border-radius: 6px;
-				font-size: 14px;
-				border-left: 4px solid;
-			}
-
-			.status.connected {
-				background-color: rgba(46, 125, 50, 0.1);
-				border-color: var(--success-color);
-				color: var(--success-color);
-			}
-
-			.status.error {
-				background-color: rgba(198, 40, 40, 0.1);
-				border-color: var(--error-color);
-				color: var(--error-color);
-			}
-
-			.status.processing {
-				background-color: rgba(74, 0, 224, 0.1);
-				border-color: var(--primary-color);
-				color: var(--primary-color);
-			}
-
-			.video-container {
-				display: flex;
-				gap: 20px;
-				align-items: flex-start;
-				flex-wrap: wrap;
-			}
-
-			.video-preview {
-				flex: 1;
-				min-width: 320px;
-			}
-
-			.video-controls {
-				flex: 1;
-				min-width: 300px;
-			}
-
-			#videoPreview {
-				width: 100%;
-				max-width: 480px;
-				border: 2px solid #ddd;
-				border-radius: 8px;
-				background: #000;
-			}
-
-			.audio-container {
-				margin-top: 20px;
-			}
-
-			#audioVisualizer {
-				width: 100%;
-				height: 120px;
-				background: linear-gradient(to bottom, #f8f8f8, #e8e8e8);
-				margin-top: 15px;
-				border-radius: 8px;
-				overflow: hidden;
-			}
-
-			.stats-grid {
-				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-				gap: 15px;
-				margin-top: 15px;
-			}
-
-			.stat-item {
-				background: rgba(74, 0, 224, 0.05);
-				padding: 10px;
-				border-radius: 6px;
-				text-align: center;
-			}
-
-			.stat-value {
-				font-size: 1.2em;
-				font-weight: bold;
-				color: var(--primary-color);
-			}
-
-			.stat-label {
-				font-size: 0.9em;
-				color: var(--text-light);
-				margin-top: 5px;
-			}
-
-			@media (max-width: 768px) {
-				body {
-					padding: 15px;
-				}
-
-				.card {
-					padding: 20px;
-				}
-
-				h1 {
-					font-size: 1.8rem;
-				}
-
-				.video-container {
-					flex-direction: column;
-				}
-			}
-		</style>
+		<link rel="stylesheet" href="static/style.css" />
+		<script src="static/app.js" defer></script>
 	</head>
 	<body>
 		<div class="container">
-			<h1>Live Music Generator - Client Video</h1>
+			<!-- Header Section -->
+			<header class="hero-section">
+				<h1>Live Music Generator</h1>
+				<p class="subtitle">
+					Transform your camera feed into beautiful music in real-time
+				</p>
+			</header>
 
-			<div class="card">
-				<h2>Video Input</h2>
-				<div class="video-container">
-					<div class="video-preview">
-						<video
-							id="videoPreview"
-							autoplay
-							muted
-							playsinline
-							style="display: none"
-						></video>
-						<div
-							id="videoPlaceholder"
-							style="
-								width: 100%;
-								max-width: 480px;
-								height: 360px;
-								background: #333;
-								display: flex;
-								align-items: center;
-								justify-content: center;
-								color: white;
-								border-radius: 8px;
-								font-size: 18px;
-							"
+			<!-- Main Controls -->
+			<div class="main-controls">
+				<div class="control-group">
+					<button id="startCameraBtn" class="primary-btn">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
 						>
-							Click "Start Camera" to begin
+							<path
+								d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"
+							/>
+						</svg>
+						Start Camera
+					</button>
+
+					<button id="liveBtn" class="success-btn" disabled>
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+						>
+							<path d="M8 5v14l11-7z" />
+						</svg>
+						Generate Music
+					</button>
+
+					<button id="stopMusicBtn" class="danger-btn" disabled>
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+						>
+							<rect x="6" y="6" width="12" height="12" />
+						</svg>
+						Stop Music
+					</button>
+				</div>
+			</div>
+
+			<!-- Video and Audio Section -->
+			<div class="media-section">
+				<!-- Video Preview -->
+				<div class="card video-card">
+					<div class="card-header">
+						<h2>Camera Feed</h2>
+						<div class="status-indicator">
+							<div class="status-dot" id="cameraStatusDot"></div>
+							<span id="cameraStatus">Camera not started</span>
 						</div>
-						<canvas
-							id="captureCanvas"
-							style="display: none"
-						></canvas>
 					</div>
-					<div class="video-controls">
-						<button id="startCameraBtn">Start Camera</button>
-						<button id="stopCameraBtn" disabled>Stop Camera</button>
-						<button id="liveBtn" disabled>
-							Start Music Generation
-						</button>
-						<button id="stopMusicBtn" disabled>Stop Music</button>
 
-						<div class="status" id="cameraStatus">
-							Camera not started
-						</div>
-						<div class="status" id="liveStatus">
-							Music generation not started
-						</div>
-
-						<div
-							class="stats-grid"
-							id="videoStats"
-							style="display: none"
-						>
-							<div class="stat-item">
-								<div class="stat-value" id="fpsCounter">0</div>
-								<div class="stat-label">FPS</div>
-							</div>
-							<div class="stat-item">
-								<div class="stat-value" id="framesSent">0</div>
-								<div class="stat-label">Frames Sent</div>
-							</div>
-							<div class="stat-item">
-								<div class="stat-value" id="videoStatus">
-									Disconnected
+					<div class="video-container">
+						<div class="video-preview">
+							<video
+								id="videoPreview"
+								autoplay
+								muted
+								playsinline
+							></video>
+							<div
+								id="videoPlaceholder"
+								class="video-placeholder"
+							>
+								<div class="placeholder-content">
+									<svg
+										width="64"
+										height="64"
+										viewBox="0 0 24 24"
+										fill="currentColor"
+										opacity="0.3"
+									>
+										<path
+											d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"
+										/>
+									</svg>
+									<p>Click "Start Camera" to begin</p>
 								</div>
-								<div class="stat-label">Video Stream</div>
 							</div>
+							<canvas id="captureCanvas"></canvas>
 						</div>
+					</div>
+
+					<!-- Processing Status -->
+					<div class="processing-status">
+						<div class="status-indicator">
+							<div class="status-dot" id="musicStatusDot"></div>
+							<div id="liveStatus"></div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Audio Output -->
+				<div class="card audio-card">
+					<div class="card-header">
+						<h2>Audio Output</h2>
+						<div class="status-indicator">
+							<div class="status-dot" id="audioStatusDot"></div>
+							<span id="connectionStatus"
+								>Connecting to audio stream...</span
+							>
+						</div>
+					</div>
+
+					<div class="audio-section">
+						<div
+							id="audioVisualizer"
+							class="audio-visualizer"
+						></div>
+						<audio id="audioPlayer" controls></audio>
 					</div>
 				</div>
 			</div>
 
-			<div class="card audio-container">
-				<h2>Audio Output</h2>
-				<audio id="audioPlayer" controls></audio>
-				<div id="audioVisualizer"></div>
-				<div class="status" id="connectionStatus">
-					Connecting to audio stream...
-				</div>
-			</div>
+			<!-- Footer -->
+			<footer class="app-footer">
+				<p>Experience the magic of AI-powered music generation</p>
+			</footer>
 		</div>
-
-		<script>
-			// DOM Elements
-			const audioPlayer = document.getElementById('audioPlayer')
-			const connectionStatus = document.getElementById('connectionStatus')
-			const cameraStatus = document.getElementById('cameraStatus')
-			const liveStatus = document.getElementById('liveStatus')
-			const liveBtn = document.getElementById('liveBtn')
-			const startCameraBtn = document.getElementById('startCameraBtn')
-			const stopCameraBtn = document.getElementById('stopCameraBtn')
-			const stopMusicBtn = document.getElementById('stopMusicBtn')
-			const audioVisualizer = document.getElementById('audioVisualizer')
-			const videoPreview = document.getElementById('videoPreview')
-			const videoPlaceholder = document.getElementById('videoPlaceholder')
-			const captureCanvas = document.getElementById('captureCanvas')
-			const videoStats = document.getElementById('videoStats')
-
-			// Video and audio variables
-			let audioContext
-			let analyser
-			let audioSource
-			let visualizationInterval
-			let audioWs
-			let videoWs
-			let mediaStream = null
-			let captureContext = null
-			let frameInterval = null
-			let reconnectAttempts = 0
-			const maxReconnectAttempts = 5
-			let keepAliveInterval
-			const sampleRate = 48000 // Matching OUTPUT_RATE
-
-			// Statistics
-			let framesSentCount = 0
-			let lastFpsTime = Date.now()
-			let fpsFrameCount = 0
-
-			// Initialize Web Audio API
-			function initAudioContext() {
-				try {
-					if (audioContext && audioContext.state !== 'closed') {
-						return audioContext
-					}
-
-					audioContext = new (window.AudioContext ||
-						window.webkitAudioContext)({
-						sampleRate: sampleRate,
-					})
-					analyser = audioContext.createAnalyser()
-					analyser.fftSize = 256
-
-					const gainNode = audioContext.createGain()
-					gainNode.gain.value = 1.0
-
-					analyser.connect(gainNode)
-					gainNode.connect(audioContext.destination)
-
-					setupVisualization()
-
-					console.log(
-						'Audio context initialized with sample rate:',
-						audioContext.sampleRate
-					)
-					return audioContext
-				} catch (e) {
-					console.error('Error initializing audio context:', e)
-					updateStatus(
-						connectionStatus,
-						'Error initializing audio',
-						'error'
-					)
-					return null
-				}
-			}
-
-			// Audio visualization setup
-			function setupVisualization() {
-				if (visualizationInterval) {
-					clearInterval(visualizationInterval)
-				}
-
-				const canvas = document.createElement('canvas')
-				canvas.width = audioVisualizer.clientWidth
-				canvas.height = audioVisualizer.clientHeight
-				audioVisualizer.innerHTML = ''
-				audioVisualizer.appendChild(canvas)
-
-				const ctx = canvas.getContext('2d')
-				const gradient = ctx.createLinearGradient(
-					0,
-					0,
-					0,
-					canvas.height
-				)
-				gradient.addColorStop(0, '#4a00e0')
-				gradient.addColorStop(1, '#8e2de2')
-
-				visualizationInterval = setInterval(() => {
-					if (!analyser) return
-
-					const bufferLength = analyser.frequencyBinCount
-					const dataArray = new Uint8Array(bufferLength)
-					analyser.getByteFrequencyData(dataArray)
-
-					ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
-					ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-					const barWidth = (canvas.width / bufferLength) * 2.5
-					let x = 0
-
-					for (let i = 0; i < bufferLength; i++) {
-						const barHeight = (dataArray[i] / 255) * canvas.height
-
-						ctx.fillStyle = gradient
-						ctx.fillRect(
-							x,
-							canvas.height - barHeight,
-							barWidth,
-							barHeight
-						)
-
-						x += barWidth + 1
-					}
-				}, 60)
-			}
-
-			// Camera initialization
-			async function initializeCamera() {
-				try {
-					updateStatus(
-						cameraStatus,
-						'Starting camera...',
-						'processing'
-					)
-
-					// Stop existing stream if any
-					if (mediaStream) {
-						mediaStream.getTracks().forEach((track) => track.stop())
-					}
-
-					// Request camera access
-					mediaStream = await navigator.mediaDevices.getUserMedia({
-						video: {
-							width: { ideal: 640 },
-							height: { ideal: 480 },
-							frameRate: { ideal: 15 },
-							facingMode: { exact: 'environment' },
-						},
-					})
-
-					// Setup video element
-					videoPreview.srcObject = mediaStream
-					videoPreview.style.display = 'block'
-					videoPlaceholder.style.display = 'none'
-
-					// Setup canvas for frame capture
-					captureCanvas.width = 640
-					captureCanvas.height = 480
-					captureContext = captureCanvas.getContext('2d')
-
-					// Update UI
-					startCameraBtn.disabled = true
-					stopCameraBtn.disabled = false
-					liveBtn.disabled = false
-
-					updateStatus(cameraStatus, 'Camera ready', 'connected')
-					videoStats.style.display = 'grid'
-
-					console.log('Camera initialized successfully')
-				} catch (error) {
-					console.error('Camera initialization failed:', error)
-					updateStatus(
-						cameraStatus,
-						'Camera access failed: ' + error.message,
-						'error'
-					)
-
-					// Reset UI on error
-					startCameraBtn.disabled = false
-					stopCameraBtn.disabled = true
-					liveBtn.disabled = true
-				}
-			}
-
-			// Stop camera
-			function stopCamera() {
-				if (mediaStream) {
-					mediaStream.getTracks().forEach((track) => track.stop())
-					mediaStream = null
-				}
-
-				if (frameInterval) {
-					clearInterval(frameInterval)
-					frameInterval = null
-				}
-
-				if (videoWs) {
-					videoWs.close()
-					videoWs = null
-				}
-
-				videoPreview.srcObject = null
-				videoPreview.style.display = 'none'
-				videoPlaceholder.style.display = 'flex'
-
-				startCameraBtn.disabled = false
-				stopCameraBtn.disabled = true
-				liveBtn.disabled = true
-				stopMusicBtn.disabled = true
-
-				updateStatus(cameraStatus, 'Camera stopped', 'processing')
-				videoStats.style.display = 'none'
-
-				// Reset stats
-				framesSentCount = 0
-				fpsFrameCount = 0
-				document.getElementById('framesSent').textContent = '0'
-				document.getElementById('fpsCounter').textContent = '0'
-				document.getElementById('videoStatus').textContent =
-					'Disconnected'
-			}
-
-			// Video WebSocket connection
-			function connectVideoWebSocket() {
-				const protocol =
-					window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-				const host = window.location.host
-				videoWs = new WebSocket(`${protocol}//${host}/ws/video`)
-
-				videoWs.onopen = () => {
-					console.log('Video WebSocket connected')
-					document.getElementById('videoStatus').textContent =
-						'Connected'
-					startVideoStreaming()
-				}
-
-				videoWs.onmessage = (event) => {
-					try {
-						const data = JSON.parse(event.data)
-						if (data.status === 'frame_received') {
-							// Frame acknowledged by server
-							console.log('Frame acknowledged')
-						} else if (data.error) {
-							console.error('Server error:', data.error)
-						}
-					} catch (e) {
-						console.log('Non-JSON message:', event.data)
-					}
-				}
-
-				videoWs.onclose = (event) => {
-					console.log('Video WebSocket closed:', event.code)
-					document.getElementById('videoStatus').textContent =
-						'Disconnected'
-
-					if (frameInterval) {
-						clearInterval(frameInterval)
-						frameInterval = null
-					}
-				}
-
-				videoWs.onerror = (error) => {
-					console.error('Video WebSocket error:', error)
-					document.getElementById('videoStatus').textContent = 'Error'
-				}
-			}
-
-			// Start video streaming
-			function startVideoStreaming() {
-				if (frameInterval) {
-					clearInterval(frameInterval)
-				}
-
-				frameInterval = setInterval(() => {
-					if (
-						videoPreview &&
-						captureContext &&
-						videoWs &&
-						videoWs.readyState === WebSocket.OPEN
-					) {
-						try {
-							// Draw current video frame to canvas
-							captureContext.drawImage(
-								videoPreview,
-								0,
-								0,
-								640,
-								480
-							)
-
-							// Convert to base64 JPEG
-							const frameData = captureCanvas.toDataURL(
-								'image/jpeg',
-								0.8
-							)
-
-							// Send frame to server
-							videoWs.send(
-								JSON.stringify({
-									frame: frameData,
-									timestamp: Date.now(),
-								})
-							)
-
-							// Update statistics
-							framesSentCount++
-							fpsFrameCount++
-							document.getElementById('framesSent').textContent =
-								framesSentCount
-
-							// Calculate FPS
-							const now = Date.now()
-							if (now - lastFpsTime >= 1000) {
-								const fps = Math.round(
-									(fpsFrameCount * 1000) / (now - lastFpsTime)
-								)
-								document.getElementById(
-									'fpsCounter'
-								).textContent = fps
-								lastFpsTime = now
-								fpsFrameCount = 0
-							}
-						} catch (error) {
-							console.error('Error capturing frame:', error)
-						}
-					}
-				}, 100) // Send frame every 100ms (10 FPS)
-			}
-
-			// Audio WebSocket connection management
-			function connectAudioWebSocket() {
-				if (audioWs) {
-					try {
-						audioWs.close()
-					} catch (e) {
-						console.log(
-							'Error closing previous audio connection:',
-							e
-						)
-					}
-				}
-
-				updateStatus(
-					connectionStatus,
-					'Connecting to audio stream...',
-					'processing'
-				)
-
-				const protocol =
-					window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-				const host = window.location.host
-				audioWs = new WebSocket(`${protocol}//${host}/ws/audio`)
-
-				audioWs.binaryType = 'arraybuffer'
-
-				audioWs.onopen = () => {
-					reconnectAttempts = 0
-					updateStatus(
-						connectionStatus,
-						'Connected to audio stream',
-						'connected'
-					)
-					initAudioContext()
-					startKeepAlive()
-					console.log('Audio WebSocket connection established')
-				}
-
-				audioWs.onmessage = async (event) => {
-					if (event.data instanceof ArrayBuffer) {
-						try {
-							const audioContext = initAudioContext()
-							if (!audioContext) return
-
-							// Try decoding as WAV first
-							try {
-								const audioData =
-									await audioContext.decodeAudioData(
-										event.data
-									)
-								playAudioData(audioData)
-								return
-							} catch (wavError) {
-								console.log(
-									'WAV decode failed, trying raw PCM:',
-									wavError
-								)
-							}
-
-							// If WAV fails, try raw PCM
-							try {
-								const audioData = decodeRawPCM(
-									event.data,
-									audioContext
-								)
-								playAudioData(audioData)
-							} catch (pcmError) {
-								console.error('PCM decode failed:', pcmError)
-								updateStatus(
-									connectionStatus,
-									'Error decoding audio',
-									'error'
-								)
-							}
-						} catch (e) {
-							console.error('Error processing audio:', e)
-							updateStatus(
-								connectionStatus,
-								'Error processing audio',
-								'error'
-							)
-						}
-					} else if (typeof event.data === 'string') {
-						if (event.data === 'pong') {
-							console.log('Audio keepalive received')
-						} else {
-							console.log('Server message:', event.data)
-						}
-					}
-				}
-
-				audioWs.onclose = (event) => {
-					stopKeepAlive()
-
-					if (event.code === 1000) {
-						updateStatus(
-							connectionStatus,
-							'Audio connection closed',
-							'processing'
-						)
-					} else {
-						const message =
-							event.code === 1006
-								? 'Audio connection failed'
-								: 'Audio connection closed'
-						updateStatus(
-							connectionStatus,
-							`${message} (code ${event.code}) - reconnecting...`,
-							'error'
-						)
-
-						if (reconnectAttempts < maxReconnectAttempts) {
-							reconnectAttempts++
-							const delay = Math.min(
-								1000 * reconnectAttempts,
-								5000
-							)
-							setTimeout(connectAudioWebSocket, delay)
-						} else {
-							updateStatus(
-								connectionStatus,
-								'Max audio reconnection attempts reached',
-								'error'
-							)
-						}
-					}
-				}
-
-				audioWs.onerror = (error) => {
-					console.error('Audio WebSocket error:', error)
-					updateStatus(
-						connectionStatus,
-						'Audio connection error',
-						'error'
-					)
-				}
-			}
-
-			// Play audio data
-			function playAudioData(audioData) {
-				if (!audioContext) {
-					initAudioContext()
-					if (!audioContext) return
-				}
-
-				// Stop previous source if exists
-				if (audioSource) {
-					try {
-						audioSource.stop()
-					} catch (e) {
-						console.log('Error stopping previous source:', e)
-					}
-				}
-
-				// Create new source
-				audioSource = audioContext.createBufferSource()
-				audioSource.buffer = audioData
-				audioSource.connect(analyser)
-				audioSource.start()
-
-				// Visual feedback
-				updateStatus(connectionStatus, 'Playing audio...', 'connected')
-			}
-
-			// Decode raw PCM data
-			function decodeRawPCM(arrayBuffer, audioContext) {
-				const numChannels = 2 // Stereo
-				const bytesPerSample = 2 // 16-bit
-				const totalSamples =
-					arrayBuffer.byteLength / (numChannels * bytesPerSample)
-
-				const audioBuffer = audioContext.createBuffer(
-					numChannels,
-					totalSamples,
-					audioContext.sampleRate
-				)
-
-				const view = new DataView(arrayBuffer)
-
-				for (let channel = 0; channel < numChannels; channel++) {
-					const channelData = audioBuffer.getChannelData(channel)
-					for (let i = 0; i < totalSamples; i++) {
-						const offset =
-							(i * numChannels + channel) * bytesPerSample
-						const sample = view.getInt16(offset, true)
-						channelData[i] = sample / 32768.0 // Convert to float
-					}
-				}
-
-				return audioBuffer
-			}
-
-			// Keepalive functions
-			function startKeepAlive() {
-				stopKeepAlive()
-				keepAliveInterval = setInterval(() => {
-					if (audioWs && audioWs.readyState === WebSocket.OPEN) {
-						try {
-							audioWs.send('ping')
-							console.log('Sent audio keepalive ping')
-						} catch (e) {
-							console.log('Audio keepalive send error:', e)
-						}
-					}
-				}, 20000) // Send ping every 20 seconds
-			}
-
-			function stopKeepAlive() {
-				if (keepAliveInterval) {
-					clearInterval(keepAliveInterval)
-					keepAliveInterval = null
-				}
-			}
-
-			// Update status element
-			function updateStatus(element, message, type = '') {
-				element.textContent = message
-				element.className = 'status ' + type
-			}
-
-			// Start live music generation
-			async function startLiveProcessing() {
-				liveBtn.disabled = true
-				updateStatus(
-					liveStatus,
-					'Starting music generation...',
-					'processing'
-				)
-
-				try {
-					// Connect video WebSocket first
-					connectVideoWebSocket()
-
-					// Start music processing on server
-					const response = await fetch('/start-live', {
-						method: 'POST',
-					})
-
-					if (!response.ok) {
-						throw new Error(
-							(await response.text()) ||
-								'Failed to start music generation'
-						)
-					}
-
-					const result = await response.json()
-					updateStatus(
-						liveStatus,
-						result.message || 'Music generation started',
-						'connected'
-					)
-
-					stopMusicBtn.disabled = false
-				} catch (error) {
-					console.error('Live processing error:', error)
-					updateStatus(
-						liveStatus,
-						error.message || 'Failed to start music generation',
-						'error'
-					)
-					liveBtn.disabled = false
-				}
-			}
-
-			// Stop music generation
-			function stopMusicGeneration() {
-				if (videoWs) {
-					videoWs.close()
-					videoWs = null
-				}
-
-				if (frameInterval) {
-					clearInterval(frameInterval)
-					frameInterval = null
-				}
-
-				liveBtn.disabled = false
-				stopMusicBtn.disabled = true
-
-				updateStatus(
-					liveStatus,
-					'Music generation stopped',
-					'processing'
-				)
-				document.getElementById('videoStatus').textContent =
-					'Disconnected'
-			}
-
-			// Event listeners
-			startCameraBtn.addEventListener('click', initializeCamera)
-			stopCameraBtn.addEventListener('click', stopCamera)
-			liveBtn.addEventListener('click', startLiveProcessing)
-			stopMusicBtn.addEventListener('click', stopMusicGeneration)
-
-			// Initialize on DOM load
-			document.addEventListener('DOMContentLoaded', () => {
-				// Check for required APIs
-				if (!window.WebSocket) {
-					updateStatus(
-						connectionStatus,
-						'WebSocket not supported in this browser',
-						'error'
-					)
-					return
-				}
-
-				if (!(window.AudioContext || window.webkitAudioContext)) {
-					updateStatus(
-						connectionStatus,
-						'Web Audio API not supported',
-						'error'
-					)
-					return
-				}
-
-				if (
-					!navigator.mediaDevices ||
-					!navigator.mediaDevices.getUserMedia
-				) {
-					updateStatus(
-						cameraStatus,
-						'Camera access not supported in this browser',
-						'error'
-					)
-					startCameraBtn.disabled = true
-					return
-				}
-
-				// Initialize audio context
-				initAudioContext()
-
-				// Connect to audio WebSocket
-				connectAudioWebSocket()
-
-				// Handle page visibility changes
-				document.addEventListener('visibilitychange', () => {
-					if (document.visibilityState === 'visible') {
-						console.log(
-							'Page became visible, reconnecting audio...'
-						)
-						connectAudioWebSocket()
-					} else {
-						console.log('Page hidden, cleaning up...')
-						stopKeepAlive()
-					}
-				})
-			})
-
-			// Clean up on window close
-			window.addEventListener('beforeunload', () => {
-				stopKeepAlive()
-
-				if (audioWs) {
-					audioWs.close()
-				}
-
-				if (videoWs) {
-					videoWs.close()
-				}
-
-				if (mediaStream) {
-					mediaStream.getTracks().forEach((track) => track.stop())
-				}
-
-				if (audioSource) {
-					audioSource.stop()
-				}
-
-				if (visualizationInterval) {
-					clearInterval(visualizationInterval)
-				}
-
-				if (frameInterval) {
-					clearInterval(frameInterval)
-				}
-			})
-		</script>
 	</body>
 </html>

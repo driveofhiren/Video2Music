@@ -7,9 +7,6 @@ import os
 import uuid
 import asyncio
 from pathlib import Path
-# from final import process_upload, start_live_processing
-from final import start_live_processing
-from final import start_client_video_processing, update_frame_from_client
 import cv2
 import time
 from typing import Dict
@@ -18,6 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocketDisconnect
 import uvicorn
 import json
+import asyncio
+import threading
+import queue
+import time
+import builtins
+import sys
 
 app = FastAPI()
 
@@ -38,6 +41,95 @@ templates = Jinja2Templates(directory="static")
 active_connections: Dict[str, WebSocket] = {}
 video_connections: Dict[str, WebSocket] = {}
 music_processing_task = None
+log_connections: Dict[str, WebSocket] = {}
+log_queue = queue.Queue()
+original_print = builtins.print
+
+
+def safe_print(*args, **kwargs):
+    """Safe print that won't break audio processing"""
+    # Always call original print first
+    # original_print(*args, **kwargs)
+    
+    # Try to queue the message for WebSocket sending
+    try:
+        message = " ".join(str(arg) for arg in args)
+        if not log_queue.full():
+            log_queue.put_nowait(message)
+    except:
+        # If queueing fails, just continue
+        pass
+
+# Replace print function
+builtins.print = safe_print
+
+
+async def process_log_queue():
+    while True:
+        try:
+            if not log_queue.empty():
+                message = log_queue.get_nowait()
+                await broadcast_log(message)
+        except:
+            pass
+        await asyncio.sleep(0.1)
+
+
+@app.websocket("/ws/logs")
+async def websocket_logs(websocket: WebSocket):
+    await websocket.accept()
+    connection_id = str(uuid.uuid4())
+    log_connections[connection_id] = websocket
+    
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                await websocket.send_text("ping")
+            except WebSocketDisconnect:
+                break
+    except:
+        pass
+    finally:
+        log_connections.pop(connection_id, None)
+
+async def broadcast_log(message: str):
+    """Safely broadcast log message"""
+    if not log_connections:
+        return
+    
+    try:
+        log_data = json.dumps({
+            "type": "log",
+            "message": message,
+            "timestamp": time.time()
+        })
+        
+        dead_connections = []
+        for connection_id, websocket in log_connections.items():
+            try:
+                await websocket.send_text(log_data)
+            except:
+                dead_connections.append(connection_id)
+        
+        # Clean up dead connections
+        for conn_id in dead_connections:
+            log_connections.pop(conn_id, None)
+            
+    except:
+        pass  # Don't let logging break the app
+
+
+@app.on_event("startup")
+async def startup_event():
+    # Start the log queue processor
+    asyncio.create_task(process_log_queue())
+
+from final import start_client_video_processing, update_frame_from_client
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -45,7 +137,28 @@ async def home(request: Request):
 
 @app.post("/start-live")
 async def handle_start_live():
-    global music_processing_task
+    global music_processing_task, stop_processing_flag
+    
+    # Stop any existing processing first
+    stop_processing_flag = True
+    if music_processing_task and not music_processing_task.done():
+        music_processing_task.cancel()
+        try:
+            await music_processing_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Reset flag and start new processing
+    stop_processing_flag = False
+    music_processing_task = asyncio.create_task(start_client_video_processing(broadcast_audio))
+    return {"message": "Live processing started"}
+
+@app.post("/stop-live")
+async def handle_stop_live():
+    global music_processing_task, stop_processing_flag
+    
+    # Set stop flag
+    stop_processing_flag = True
     
     # Cancel existing task if running
     if music_processing_task and not music_processing_task.done():
@@ -55,9 +168,10 @@ async def handle_start_live():
         except asyncio.CancelledError:
             pass
     
-    # Start new music processing task
-    music_processing_task = asyncio.create_task(start_client_video_processing(broadcast_audio))
-    return {"message": "Live processing started - waiting for video frames"}
+    music_processing_task = None
+    stop_processing_flag = False
+    
+    return {"message": "Live processing stopped"}
 
 @app.websocket("/ws/audio")
 async def websocket_audio(websocket: WebSocket):
@@ -207,5 +321,5 @@ async def shutdown_event():
     print("Application shutdown complete")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))  # 👈 important
+    port = int(os.environ.get("PORT", 8080))  
     uvicorn.run("main:app", host="0.0.0.0", port=port)

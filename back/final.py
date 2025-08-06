@@ -29,6 +29,8 @@ current_frame = None
 frame_lock = asyncio.Lock()
 frame_timestamp = 0
 no_frame_count = 0
+music_processing_task = None
+stop_processing_flag = False
 
 async def update_frame_from_client(image_bytes: bytes):
     """Update the current frame from client"""
@@ -46,18 +48,23 @@ async def update_frame_from_client(image_bytes: bytes):
                 current_frame = frame
                 frame_timestamp = time.time()
                 no_frame_count = 0
-            print(f"Frame updated: {frame.shape}")
+            # print(f"Frame updated: {frame.shape}")
         else:
             print("Failed to decode frame from client")
             
     except Exception as e:
         print(f"Error updating frame from client: {e}")
 
+def set_stop_flag(value: bool):
+    """Set the stop processing flag"""
+    global stop_processing_flag
+    stop_processing_flag = value
+
 async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
     """Process video frames received from client and generate adaptive music"""
     global current_frame, frame_timestamp, no_frame_count
     
-
+    reset_processing_state()
     print("Starting client video processing...")
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
     if not api_key:
@@ -162,7 +169,7 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
             last_frame_time = time.time()
             
             try:
-                while True:
+                while not stop_processing_flag:
                     current_time = time.time()
                     
                     # Check if we're receiving frames
@@ -223,6 +230,10 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                           f"Active Prompts: {status.get('num_current_dynamic', 0)}")
                     
                     await asyncio.sleep(0.1)
+
+            except asyncio.CancelledError:
+                print("Music processing was cancelled")
+                raise
                     
             finally:
                 audio_task.cancel()
@@ -250,6 +261,18 @@ async def get_processing_stats():
             "no_frame_count": no_frame_count,
             "time_since_last_frame": time.time() - frame_timestamp if frame_timestamp > 0 else 0
         }
+
+def reset_processing_state():
+    """Reset all processing state for restart"""
+    global current_frame, frame_timestamp, no_frame_count
+    
+    # Reset frame state
+    current_frame = None
+    frame_timestamp = 0
+    no_frame_count = 0
+    
+    print("Processing state reset")
+
 # Check for GPU availability and set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -623,6 +646,21 @@ class EnhancedMusicGenerator:
         
         # Current dynamic prompts for monitoring
         self.current_dynamic_prompts = []
+    
+    def reset_state(self):
+    # """Reset generator state for restart"""
+        self.base_prompts = []
+        self.dynamic_prompt_pools = {}
+        self.base_prompts_generated = False
+        self.active_prompts = {}
+        self.prompt_history = {}
+        self.scene_context_history = []
+        self.motion_window = []
+        self.brightness_history = []
+        self.initial_analysis_data = []
+        self.analysis_start_time = None
+        self.current_dynamic_prompts = []
+        print("Music generator state reset")
 
     def initialize_ai_client(self):
         """Initialize the AI client for prompt generation"""
@@ -1242,6 +1280,7 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
     prompt_generator = EnhancedMusicGenerator()
+    prompt_generator.reset_state()
     
     # Camera setup with timeout and retry
     cap = None
