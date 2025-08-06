@@ -26,10 +26,8 @@ build/
 
 # === Checkpoints / Model Files ===
 *.pth
-*.pt
 *.ckpt
 *.t7
-*.tar
 
 # === Video / Audio Outputs ===
 *.mp4
