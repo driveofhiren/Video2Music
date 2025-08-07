@@ -162,13 +162,10 @@ class LiveMusicGenerator {
 
 		// Add timestamp
 		const timestamp = new Date().toLocaleTimeString()
-		const formattedMessage = `[${timestamp}] ${message}`
+		const formattedMessage = `${message}`
 
 		// Simply replace the entire content instead of appending
 		liveStatus.textContent = formattedMessage
-		liveStatus.style.color = '#00ff88' // Green color for logs
-		liveStatus.style.fontSize = '0.85em'
-		liveStatus.style.padding = '5px'
 	}
 
 	// Audio Context Management
@@ -542,7 +539,7 @@ class LiveMusicGenerator {
 		// Visual feedback
 		this.updateStatus(
 			this.connectionStatus,
-			'Playing audio...',
+			'Playing music...',
 			'connected'
 		)
 	}

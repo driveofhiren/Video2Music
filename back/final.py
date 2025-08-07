@@ -24,6 +24,16 @@ import argparse
 import json
 from dataclasses import dataclass
 from enum import Enum
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 current_frame = None
 frame_lock = asyncio.Lock()
@@ -48,12 +58,12 @@ async def update_frame_from_client(image_bytes: bytes):
                 current_frame = frame
                 frame_timestamp = time.time()
                 no_frame_count = 0
-            # print(f"Frame updated: {frame.shape}")
+            # logging.info(f"Frame updated: {frame.shape}")
         else:
-            print("Failed to decode frame from client")
+            logging.info("Failed to decode frame from client")
             
     except Exception as e:
-        print(f"Error updating frame from client: {e}")
+        logging.info(f"Error updating frame from client: {e}")
 
 def set_stop_flag(value: bool):
     """Set the stop processing flag"""
@@ -65,10 +75,12 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
     global current_frame, frame_timestamp, no_frame_count
     
     reset_processing_state()
-    print("Starting client video processing...")
+    logging.info("Starting video processing...")
+    print("Starting video processing...")
+
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
     if not api_key:
-        print("ERROR: No LYRIA_API_KEY found in environment")
+        logging.info("ERROR: No LYRIA_API_KEY found in environment")
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
     prompt_generator = EnhancedMusicGenerator()
@@ -77,7 +89,7 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
     
     try:
         async with client.aio.live.music.connect(model=MODEL) as session:
-            print("Connected to music session. Waiting for video frames from client...")
+            logging.info("Connected to music session. Waiting for video frames from client...")
             
             # Initial configuration
             config = types.LiveMusicGenerationConfig(
@@ -90,11 +102,11 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
             
             # Set initial configuration
             await session.set_music_generation_config(config=config)
-            print("Initial configuration set")
+            logging.info("Initial configuration set")
 
             # Wait for first frame and collect initial analysis data
             base_prompts = None
-            print("Waiting for video frames to start analysis...")
+            logging.info("Waiting for video frames to start analysis...")
             
             # Wait for first frame with timeout
             max_wait_time = 30  # seconds
@@ -102,13 +114,13 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
             
             while current_frame is None:
                 if time.time() - wait_start > max_wait_time:
-                    print("Timeout waiting for first video frame")
+                    logging.info("Timeout waiting for first video frame")
                     return {"status": "error", "message": "No video frames received"}
                 
-                print("Waiting for first frame from client...")
+                logging.info("Waiting for first frame from client...")
                 await asyncio.sleep(1)
             
-            print("First frame received! Starting music generation...")
+            logging.info("First frame received! Starting music generation...")
             
             # Collect initial analysis data and generate base prompts + dynamic pools
             while not prompt_generator.base_prompts_generated:
@@ -116,7 +128,7 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                     if current_frame is not None:
                         frame = current_frame.copy()
                     else:
-                        print("No frame available, waiting...")
+                        logging.info("No frame available, waiting...")
                         await asyncio.sleep(0.1)
                         continue
                 
@@ -135,14 +147,14 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                             setattr(config, attr, value)
                         await session.set_music_generation_config(config=config)
                     
-                    print(f"Base prompts set: {len(base_prompts)} prompts")
+                    logging.info(f"Base prompts set: {len(base_prompts)} prompts")
                     break
                 
                 await asyncio.sleep(0.1)
 
             # Start playback after base prompts are set
             await session.play()
-            print("Playback started")
+            logging.info("Playback started")
             
             async def receive_audio():
                 """Receive and broadcast audio from the music session"""
@@ -151,17 +163,17 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                     async for message in session.receive():
                         chunks_count += 1
                         if chunks_count == 1:
-                            print("First audio chunk received, buffering...")
+                            logging.info("First audio chunk received, buffering...")
                             await asyncio.sleep(BUFFER_SECONDS)
                         
                         if message.server_content and message.server_content.audio_chunks:
                             audio_data = message.server_content.audio_chunks[0].data
                             await broadcast_func(audio_data)
                         elif message.filtered_prompt:
-                            print("Filtered prompt:", message.filtered_prompt)
+                            logging.info("Filtered prompt:", message.filtered_prompt)
                         await asyncio.sleep(0)
                 except Exception as e:
-                    print(f"Error in audio receiver: {str(e)}")
+                    logging.info(f"Error in audio receiver: {str(e)}")
             
             last_update_time = 0
             current_config = config
@@ -182,7 +194,7 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                             no_frame_count += 1
                             # If no frames for too long, continue with last known frame
                             if current_time - last_frame_time > 5.0:
-                                print("No frames received for 5 seconds, continuing with last analysis...")
+                                logging.info("No frames received for 5 seconds, continuing with last analysis...")
                                 if no_frame_count > 50:  # Reset occasionally
                                     no_frame_count = 0
                             await asyncio.sleep(0.1)
@@ -207,24 +219,24 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                             
                             if config_changed:
                                 await session.set_music_generation_config(config=current_config)
-                                print("Updated config:", config_updates)
+                                logging.info("Updated config:", config_updates)
                         
                         # Update prompts with combined base + dynamic
-                        print("\n=== CURRENT PROMPTS ===")
-                        print("Base Prompts:")
+                        logging.info("\n=== CURRENT PROMPTS ===")
+                        logging.info("Base Prompts:")
                         for i, prompt in enumerate(base_prompts, 1):
-                            print(f"{i}. [BASE] {prompt.text} (weight: {prompt.weight:.2f})")
-                        print("\nDynamic Prompts:")
+                            logging.info(f"{i}. [BASE] {prompt.text} (weight: {prompt.weight:.2f})")
+                        logging.info("\nDynamic Prompts:")
                         for i, prompt in enumerate(prompt_generator.current_dynamic_prompts, 1):
-                            print(f"{i}. [DYNAMIC] {prompt.text} (weight: {prompt.weight:.2f})")
-                        print("=" * 30)
+                            logging.info(f"{i}. [DYNAMIC] {prompt.text} (weight: {prompt.weight:.2f})")
+                        logging.info("=" * 30)
                         
                         await session.set_weighted_prompts(prompts=all_prompts)
                         last_update_time = current_time
                     
                     # Display analysis (optional - you might want to send this back to client)
                     status = prompt_generator.get_prompt_status()
-                    print(f"Motion: {analysis.get('motion', 0):.3f}, "
+                    logging.info(f"Motion: {analysis.get('motion', 0):.3f}, "
                           f"Scene: {analysis['top_scenes'][0][0]}, "
                           f"Objects: {len(analysis['objects'])}, "
                           f"Active Prompts: {status.get('num_current_dynamic', 0)}")
@@ -232,7 +244,7 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                     await asyncio.sleep(0.1)
 
             except asyncio.CancelledError:
-                print("Music processing was cancelled")
+                logging.info("Music processing was cancelled")
                 raise
                     
             finally:
@@ -243,10 +255,10 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
                     pass
     
     except Exception as e:
-        print(f"Error in client video processing session: {str(e)}")
+        logging.info(f"Error in client video processing session: {str(e)}")
         return {"status": "error", "message": str(e)}
     finally:
-        print("Client video processing ended")
+        logging.info("Client video processing ended")
 
 
 async def get_processing_stats():
@@ -271,11 +283,11 @@ def reset_processing_state():
     frame_timestamp = 0
     no_frame_count = 0
     
-    print("Processing state reset")
+    logging.info("Processing state reset")
 
 # Check for GPU availability and set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+logging.info(f"Using device: {device}")
 
 # Load environment variables
 load_dotenv()
@@ -660,7 +672,7 @@ class EnhancedMusicGenerator:
         self.initial_analysis_data = []
         self.analysis_start_time = None
         self.current_dynamic_prompts = []
-        print("Music generator state reset")
+        logging.info("Music generator state reset")
 
     def initialize_ai_client(self):
         """Initialize the AI client for prompt generation"""
@@ -678,23 +690,24 @@ class EnhancedMusicGenerator:
                 try:
                     self.ai_client = genai_client.GenerativeModel(model_name)
                     test_response = self.ai_client.generate_content("Hello")
-                    print(f"AI client initialized successfully with model: {model_name}")
+                    logging.info(f"AI client initialized successfully with model: {model_name}")
                     return
                 except Exception as model_error:
-                    print(f"Model {model_name} failed: {model_error}")
+                    logging.info(f"Model {model_name} failed: {model_error}")
                     continue
             
             raise Exception("No working Gemini model found")
             
         except Exception as e:
-            print(f"Failed to initialize AI client: {e}")
+            logging.info(f"Failed to initialize AI client: {e}")
             self.ai_client = None
 
     def collect_initial_analysis(self, analysis: Dict) -> bool:
         """Collect analysis data for the first 5 seconds"""
         if self.analysis_start_time is None:
             self.analysis_start_time = time.time()
-            print("Starting initial 5-second analysis collection...")
+            logging.info("Starting initial 5-second analysis collection...")
+            print("Starting initial 5-second sorrounding analysis.....")
         
         current_time = time.time()
         analysis_with_time = {
@@ -704,7 +717,7 @@ class EnhancedMusicGenerator:
         self.initial_analysis_data.append(analysis_with_time)
         
         if current_time - self.analysis_start_time >= 5.0:
-            print(f"Collected {len(self.initial_analysis_data)} analysis frames over 5 seconds")
+            logging.info(f"Collected {len(self.initial_analysis_data)} analysis frames over 5 seconds")
             return True
         
         return False
@@ -928,7 +941,9 @@ Guidelines:
                 response_text = response_text[3:-3]
                 
             result = json.loads(response_text)
-            print("AI Response for base config and prompts generated successfully")
+            logging.info("AI Response for base config and prompts generated successfully")
+
+
             
             # Process configuration
             config_data = result.get('config', {})
@@ -946,7 +961,7 @@ Guidelines:
                 text = prompt_data['text']
                 weight = float(prompt_data['weight'])
                 base_prompts.append(types.WeightedPrompt(text=text, weight=weight))
-                print(f"Added base prompt: {text} (weight: {weight:.2f})")
+                logging.info(f"Added base prompt: {text} (weight: {weight:.2f})")
             
             # Process dynamic prompt pools
             dynamic_pools_data = result.get('dynamic_pools', {})
@@ -969,19 +984,19 @@ Guidelines:
                             cooldown=prompt_data.get('cooldown', 0.0)
                         )
                         self.dynamic_prompt_pools[category].append(dynamic_prompt)
-                        print(f"Added {category_name} prompt: {dynamic_prompt.text}")
+                        logging.info(f"Added {category_name} prompt: {dynamic_prompt.text}")
                 
                 except ValueError as e:
-                    print(f"Unknown category {category_name}, skipping: {e}")
+                    logging.info(f"Unknown category {category_name}, skipping: {e}")
                     continue
             
             total_dynamic_prompts = sum(len(prompts) for prompts in self.dynamic_prompt_pools.values())
-            print(f"Successfully generated: {len(base_prompts)} base prompts, {total_dynamic_prompts} dynamic prompts across {len(self.dynamic_prompt_pools)} categories")
+            logging.info(f"Successfully generated: {len(base_prompts)} base prompts, {total_dynamic_prompts} dynamic prompts across {len(self.dynamic_prompt_pools)} categories")
             
             return config, base_prompts
                 
         except Exception as e:
-            print(f"Error generating config and prompts: {e}")
+            logging.info(f"Error generating config and prompts: {e}")
             return self._fallback_base_config(aggregated_data), self._fallback_base_prompts(aggregated_data)
 
     def _analyze_context_triggers(self, analysis: Dict) -> Set[str]:
@@ -1108,7 +1123,7 @@ Guidelines:
         if len(self.motion_window) > 20:
             self.motion_window.pop(0)
         
-        print(f"Active triggers: {triggers}")
+        logging.info(f"Active triggers: {triggers}")
         
         # Process each category
         for category, prompts in self.dynamic_prompt_pools.items():
@@ -1147,7 +1162,7 @@ Guidelines:
                     # Update prompt history
                     self.prompt_history[prompt.text] = current_time
                     
-                    print(f"Selected {category.value}: {prompt.text} (weight: {final_weight:.2f}, relevance: {relevance_score:.2f})")
+                    logging.info(f"Selected {category.value}: {prompt.text} (weight: {final_weight:.2f}, relevance: {relevance_score:.2f})")
         
         # Store current dynamic prompts for display
         self.current_dynamic_prompts = selected_prompts
@@ -1163,7 +1178,11 @@ Guidelines:
             collection_complete = self.collect_initial_analysis(analysis)
             
             if collection_complete:
-                print("5-second analysis complete. Generating base configuration, prompts, and dynamic pools...")
+                logging.info("5-second analysis complete. Generating base configuration, prompts, and dynamic pools...")
+                
+                print("5-second analysis complete")
+                print("Playing music...")
+
                 aggregated_data = self.aggregate_analysis_data()
                 
                 # Generate config, base prompts, and dynamic pools
@@ -1179,7 +1198,7 @@ Guidelines:
                     'guidance': initial_config.guidance
                 }
                 
-                print(f"System initialized: {len(self.base_prompts)} base prompts, {sum(len(p) for p in self.dynamic_prompt_pools.values())} dynamic prompts")
+                logging.info(f"System initialized: {len(self.base_prompts)} base prompts, {sum(len(p) for p in self.dynamic_prompt_pools.values())} dynamic prompts")
             
             # During collection phase, return minimal prompts
             if not self.base_prompts_generated:
@@ -1290,16 +1309,16 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
             if cap.isOpened():
                 break
         except Exception as e:
-            print(f"Camera open attempt failed: {str(e)}")
+            logging.info(f"Camera open attempt failed: {str(e)}")
             await asyncio.sleep(1)
     
     if not cap or not cap.isOpened():
-        print("Error: Could not open camera after multiple attempts")
+        logging.info("Error: Could not open camera after multiple attempts")
         return
 
     try:
         async with client.aio.live.music.connect(model=MODEL) as session:
-            print("Connected to music session. Starting initial 5-second analysis...")
+            logging.info("Connected to music session. Starting initial 5-second analysis...")
             
             # Initial configuration
             config = types.LiveMusicGenerationConfig(
@@ -1312,7 +1331,7 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
             
             # Set initial configuration
             await session.set_music_generation_config(config=config)
-            print("Initial configuration set")
+            logging.info("Initial configuration set")
 
             # Collect initial analysis data and generate base prompts + dynamic pools
             base_prompts = None
@@ -1336,14 +1355,14 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                             setattr(config, attr, value)
                         await session.set_music_generation_config(config=config)
                     
-                    print(f"Base prompts set: {len(base_prompts)} prompts")
+                    logging.info(f"Base prompts set: {len(base_prompts)} prompts")
                     break
                 
                 await asyncio.sleep(0.1)
 
             # Start playback after base prompts are set
             await session.play()
-            print("Playback started")
+            logging.info("Playback started")
             
             async def receive_audio():
                 chunks_count = 0
@@ -1351,17 +1370,17 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                     async for message in session.receive():
                         chunks_count += 1
                         if chunks_count == 1:
-                            print("First audio chunk received, buffering...")
+                            logging.info("First audio chunk received, buffering...")
                             await asyncio.sleep(BUFFER_SECONDS)
                         
                         if message.server_content and message.server_content.audio_chunks:
                             audio_data = message.server_content.audio_chunks[0].data
                             await broadcast_func(audio_data)
                         elif message.filtered_prompt:
-                            print("Filtered prompt:", message.filtered_prompt)
+                            logging.info("Filtered prompt:", message.filtered_prompt)
                         await asyncio.sleep(0)
                 except Exception as e:
-                    print(f"Error in audio receiver: {str(e)}")
+                    logging.info(f"Error in audio receiver: {str(e)}")
             
             last_update_time = 0
             current_config = config
@@ -1371,7 +1390,7 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                 while True:
                     ret, frame = cap.read()
                     if not ret:
-                        print("Camera frame read failed")
+                        logging.info("Camera frame read failed")
                         break
                     
                     analysis = media_analyzer.analyze_media(frame, is_video=True)
@@ -1393,17 +1412,17 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                             
                             if config_changed:
                                 await session.set_music_generation_config(config=current_config)
-                                print("Updated config:", config_updates)
+                                logging.info("Updated config:", config_updates)
                         
                         # Update prompts with combined base + dynamic
-                        print("\n=== CURRENT PROMPTS ===")
-                        print("Base Prompts:")
+                        logging.info("\n=== CURRENT PROMPTS ===")
+                        logging.info("Base Prompts:")
                         for i, prompt in enumerate(base_prompts, 1):
-                            print(f"{i}. [BASE] {prompt.text} (weight: {prompt.weight:.2f})")
-                        print("\nDynamic Prompts:")
+                            logging.info(f"{i}. [BASE] {prompt.text} (weight: {prompt.weight:.2f})")
+                        logging.info("\nDynamic Prompts:")
                         for i, prompt in enumerate(prompt_generator.current_dynamic_prompts, 1):
-                            print(f"{i}. [DYNAMIC] {prompt.text} (weight: {prompt.weight:.2f})")
-                        print("=" * 30)
+                            logging.info(f"{i}. [DYNAMIC] {prompt.text} (weight: {prompt.weight:.2f})")
+                        logging.info("=" * 30)
                         
                         await session.set_weighted_prompts(prompts=all_prompts)
                         last_update_time = current_time
@@ -1425,11 +1444,11 @@ async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[Non
                     pass
     
     except Exception as e:
-        print(f"Error in main session: {str(e)}")
+        logging.info(f"Error in main session: {str(e)}")
     finally:
         cap.release()
         cv2.destroyAllWindows()
-        print("Resources cleaned up")
+        logging.info("Resources cleaned up")
 
 def display_analysis(analysis, frame, status):
     """Enhanced display function showing dynamic prompt system status"""

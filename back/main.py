@@ -85,10 +85,10 @@ async def websocket_logs(websocket: WebSocket):
         while True:
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                if data == "ping":
-                    await websocket.send_text("pong")
-            except asyncio.TimeoutError:
-                await websocket.send_text("ping")
+                # if data == "ping":
+                #     await websocket.send_text("pong")
+            # except asyncio.TimeoutError:
+            #     await websocket.send_text("ping")
             except WebSocketDisconnect:
                 break
     except:
@@ -105,13 +105,12 @@ async def broadcast_log(message: str):
         log_data = json.dumps({
             "type": "log",
             "message": message,
-            "timestamp": time.time()
         })
         
         dead_connections = []
         for connection_id, websocket in log_connections.items():
             try:
-                await websocket.send_text(log_data)
+                await websocket.send_text(message)
             except:
                 dead_connections.append(connection_id)
         
@@ -201,7 +200,7 @@ async def websocket_audio(websocket: WebSocket):
         print(f"WebSocket connection error: {e}")
     finally:
         active_connections.pop(connection_id, None)
-        print(f"Client {connection_id} disconnected")
+        # print(f"Client {connection_id} disconnected")
 
 
 @app.websocket("/ws/video")
@@ -209,7 +208,7 @@ async def websocket_video(websocket: WebSocket):
     await websocket.accept()
     connection_id = str(uuid.uuid4())
     video_connections[connection_id] = websocket
-    print(f"Video client {connection_id} connected")
+    # print(f"Video client {connection_id} connected")
     
     try:
         while True:
@@ -248,7 +247,7 @@ async def websocket_video(websocket: WebSocket):
         print(f"Video WebSocket error: {e}")
     finally:
         video_connections.pop(connection_id, None)
-        print(f"Video client {connection_id} disconnected")
+        # print(f"Video client {connection_id} disconnected")
 
 async def broadcast_audio(audio_data: bytes):
     if not active_connections:
