@@ -135,8 +135,21 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/start-live")
-async def handle_start_live():
+async def handle_start_live(request: Request):
     global music_processing_task, stop_processing_flag
+    
+    # Get user settings from request body - MAKE SURE THESE ARE USED
+    try:
+        body = await request.json()
+        user_bpm = int(body.get('bpm', 120))  # Cast to int
+        user_scale = str(body.get('scale', 'C_MAJOR_A_MINOR'))  # Cast to str
+        user_genre = str(body.get('genre', 'Electronic')).strip()
+        # print(f"USER SELECTED: BPM={user_bpm}, Scale={user_scale}, Genre={user_genre}")
+    except Exception as e:
+        print(f"Error parsing user settings: {e}")
+        user_bpm = 120
+        user_scale = 'C_MAJOR_A_MINOR'
+        user_genre = 'Electronic'
     
     # Stop any existing processing first
     stop_processing_flag = True
@@ -147,10 +160,12 @@ async def handle_start_live():
         except asyncio.CancelledError:
             pass
     
-    # Reset flag and start new processing
+    # Reset flag and start new processing with user settings
     stop_processing_flag = False
-    music_processing_task = asyncio.create_task(start_client_video_processing(broadcast_audio))
-    return {"message": "Live processing started"}
+    music_processing_task = asyncio.create_task(
+        start_client_video_processing(broadcast_audio, user_bpm, user_scale, user_genre)
+    )
+    return {"message": f"Live processing started with BPM: {user_bpm}, Scale: {user_scale},Genre: {user_genre}"}
 
 @app.post("/stop-live")
 async def handle_stop_live():

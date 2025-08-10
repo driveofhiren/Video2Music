@@ -20,6 +20,10 @@ class LiveMusicGenerator {
 		this.videoPreview = document.getElementById('videoPreview')
 		this.videoPlaceholder = document.getElementById('videoPlaceholder')
 		this.captureCanvas = document.getElementById('captureCanvas')
+		this.bpmSlider = document.getElementById('bpmSlider')
+		this.bpmValue = document.getElementById('bpmValue')
+		this.scaleSelect = document.getElementById('scaleSelect')
+		this.genreInput = document.getElementById('genreInput')
 
 		// Status indicators
 		this.cameraStatusDot = document.getElementById('cameraStatusDot')
@@ -57,6 +61,13 @@ class LiveMusicGenerator {
 		this.startCameraBtn.addEventListener('click', () =>
 			this.initializeCamera()
 		)
+
+		// BPM slider with real-time value update
+		this.bpmSlider.addEventListener('input', (e) => {
+			this.bpmValue.textContent = e.target.value
+			this.animateBpmChange()
+		})
+
 		this.liveBtn.addEventListener('click', () => this.startLiveProcessing())
 		this.stopMusicBtn.addEventListener('click', () =>
 			this.stopMusicGeneration()
@@ -75,6 +86,16 @@ class LiveMusicGenerator {
 
 		// Cleanup on page unload
 		window.addEventListener('beforeunload', () => this.cleanup())
+	}
+
+	animateBpmChange() {
+		const bpmDisplay = this.bpmValue.parentElement
+		bpmDisplay.style.transform = 'scale(1.1)'
+		bpmDisplay.style.color = 'var(--accent)'
+		setTimeout(() => {
+			bpmDisplay.style.transform = 'scale(1)'
+			bpmDisplay.style.color = 'var(--primary)'
+		}, 200)
 	}
 
 	async initializeApplication() {
@@ -122,7 +143,7 @@ class LiveMusicGenerator {
 
 		return true
 	}
-	// Add this to your LiveMusicGenerator class in the initializeApplication() method
+
 	connectLogWebSocket() {
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 		const host = window.location.host
@@ -139,14 +160,12 @@ class LiveMusicGenerator {
 					this.appendLog(data.message)
 				}
 			} catch (e) {
-				// Handle non-JSON messages if needed
 				this.appendLog(event.data)
 			}
 		}
 
 		this.logWs.onclose = () => {
 			console.log('Log WebSocket closed - reconnecting...')
-			// Reconnect after 3 seconds
 			setTimeout(() => this.connectLogWebSocket(), 3000)
 		}
 
@@ -155,16 +174,11 @@ class LiveMusicGenerator {
 		}
 	}
 
-	// Add this method to append logs to the status element
 	appendLog(message) {
 		const liveStatus = document.getElementById('liveStatus')
 		if (!liveStatus) return
 
-		// Add timestamp
-		const timestamp = new Date().toLocaleTimeString()
 		const formattedMessage = `${message}`
-
-		// Simply replace the entire content instead of appending
 		liveStatus.textContent = formattedMessage
 	}
 
@@ -181,7 +195,7 @@ class LiveMusicGenerator {
 			})
 
 			this.analyser = this.audioContext.createAnalyser()
-			this.analyser.fftSize = 256
+			this.analyser.fftSize = 512
 
 			const gainNode = this.audioContext.createGain()
 			gainNode.gain.value = 1.0
@@ -214,17 +228,23 @@ class LiveMusicGenerator {
 
 		const canvas = document.createElement('canvas')
 		const rect = this.audioVisualizer.getBoundingClientRect()
-		canvas.width = rect.width
-		canvas.height = rect.height
+		canvas.width = rect.width * window.devicePixelRatio || rect.width
+		canvas.height = rect.height * window.devicePixelRatio || rect.height
+		canvas.style.width = rect.width + 'px'
+		canvas.style.height = rect.height + 'px'
 
 		this.audioVisualizer.innerHTML = ''
 		this.audioVisualizer.appendChild(canvas)
 
 		const ctx = canvas.getContext('2d')
-		const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height)
-		gradient.addColorStop(0, 'rgba(102, 126, 234, 0.8)')
-		gradient.addColorStop(0.5, 'rgba(118, 75, 162, 0.6)')
-		gradient.addColorStop(1, 'rgba(102, 126, 234, 0.3)')
+		ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1)
+
+		// Enhanced gradient
+		const gradient = ctx.createLinearGradient(0, 0, 0, rect.height)
+		gradient.addColorStop(0, 'rgba(6, 182, 212, 0.8)')
+		gradient.addColorStop(0.3, 'rgba(99, 102, 241, 0.6)')
+		gradient.addColorStop(0.7, 'rgba(139, 92, 246, 0.4)')
+		gradient.addColorStop(1, 'rgba(6, 182, 212, 0.2)')
 
 		this.visualizationInterval = setInterval(() => {
 			if (!this.analyser) return
@@ -233,23 +253,38 @@ class LiveMusicGenerator {
 			const dataArray = new Uint8Array(bufferLength)
 			this.analyser.getByteFrequencyData(dataArray)
 
-			// Clear canvas with fade effect
-			ctx.fillStyle = 'rgba(0, 0, 0, 0.05)'
-			ctx.fillRect(0, 0, canvas.width, canvas.height)
+			// Clear with smooth fade
+			ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
+			ctx.fillRect(0, 0, rect.width, rect.height)
 
-			// Draw frequency bars
-			const barWidth = (canvas.width / bufferLength) * 2
+			// Enhanced visualization
+			const barWidth = (rect.width / bufferLength) * 2.5
 			let x = 0
 
 			for (let i = 0; i < bufferLength; i++) {
-				const barHeight = (dataArray[i] / 255) * canvas.height * 0.8
+				const barHeight = (dataArray[i] / 255) * rect.height * 0.9
 
+				// Add glow effect
+				ctx.shadowColor = '#06b6d4'
+				ctx.shadowBlur = 10
 				ctx.fillStyle = gradient
-				ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight)
+
+				// Rounded bars
+				ctx.beginPath()
+				ctx.roundRect(
+					x,
+					rect.height - barHeight,
+					barWidth - 2,
+					barHeight,
+					4
+				)
+				ctx.fill()
 
 				x += barWidth + 1
 			}
-		}, 50) // Smooth animation at 20fps
+
+			ctx.shadowBlur = 0
+		}, 30) // Smoother animation at ~33fps
 	}
 
 	// Camera Management
@@ -257,7 +292,7 @@ class LiveMusicGenerator {
 		try {
 			this.updateStatus(
 				this.cameraStatus,
-				'Starting camera...',
+				'Initializing camera system...',
 				'processing'
 			)
 
@@ -266,13 +301,13 @@ class LiveMusicGenerator {
 				this.mediaStream.getTracks().forEach((track) => track.stop())
 			}
 
-			// Request camera access
+			// Request camera access with enhanced settings
 			this.mediaStream = await navigator.mediaDevices.getUserMedia({
 				video: {
-					width: { ideal: 640 },
-					height: { ideal: 480 },
-					frameRate: { ideal: 15 },
-					facingMode: { exact: 'environment' },
+					width: { ideal: 1280, min: 640 },
+					height: { ideal: 720, min: 480 },
+					frameRate: { ideal: 30, min: 15 },
+					facingMode: { ideal: 'environment' },
 				},
 			})
 
@@ -290,7 +325,11 @@ class LiveMusicGenerator {
 			this.startCameraBtn.disabled = true
 			this.liveBtn.disabled = false
 
-			this.updateStatus(this.cameraStatus, 'Camera ready', 'connected')
+			this.updateStatus(
+				this.cameraStatus,
+				'Camera system ready',
+				'connected'
+			)
 
 			console.log('Camera initialized successfully')
 		} catch (error) {
@@ -381,7 +420,7 @@ class LiveMusicGenerator {
 					console.error('Error capturing frame:', error)
 				}
 			}
-		}, 1000 / this.frameRate) // Send frames based on configured frame rate
+		}, 1000 / this.frameRate)
 	}
 
 	connectAudioWebSocket() {
@@ -395,7 +434,7 @@ class LiveMusicGenerator {
 
 		this.updateStatus(
 			this.connectionStatus,
-			'Connecting to audio stream...',
+			'Establishing audio connection...',
 			'processing'
 		)
 
@@ -409,7 +448,7 @@ class LiveMusicGenerator {
 			this.reconnectAttempts = 0
 			this.updateStatus(
 				this.connectionStatus,
-				'Connected to audio stream',
+				'Audio stream connected',
 				'connected'
 			)
 			this.initAudioContext()
@@ -539,7 +578,7 @@ class LiveMusicGenerator {
 		// Visual feedback
 		this.updateStatus(
 			this.connectionStatus,
-			'Playing music...',
+			'Streaming live music...',
 			'connected'
 		)
 	}
@@ -582,7 +621,7 @@ class LiveMusicGenerator {
 					console.log('Audio keepalive send error:', e)
 				}
 			}
-		}, 20000) // Send ping every 20 seconds
+		}, 20000)
 	}
 
 	stopKeepAlive() {
@@ -597,13 +636,18 @@ class LiveMusicGenerator {
 		this.liveBtn.disabled = true
 		this.updateStatus(
 			this.liveStatus,
-			'Starting music generation...',
+			'Initializing AI music generation...',
 			'processing'
 		)
 
 		try {
 			// Connect video WebSocket first
 			this.connectVideoWebSocket()
+			const userSettings = {
+				bpm: parseInt(this.bpmSlider.value),
+				scale: this.scaleSelect.value,
+				genre: this.genreInput.value.trim(),
+			}
 
 			// Start music processing on server
 			const response = await fetch('/start-live', {
@@ -611,6 +655,7 @@ class LiveMusicGenerator {
 				headers: {
 					'Content-Type': 'application/json',
 				},
+				body: JSON.stringify(userSettings),
 			})
 
 			if (!response.ok) {
@@ -621,7 +666,7 @@ class LiveMusicGenerator {
 			const result = await response.json()
 			this.updateStatus(
 				this.liveStatus,
-				result.message || 'Music generation started',
+				result.message || 'Live music generation active',
 				'connected'
 			)
 			this.stopMusicBtn.disabled = false
@@ -681,7 +726,7 @@ class LiveMusicGenerator {
 
 		element.textContent = message
 
-		// Update corresponding status dot
+		// Update corresponding status dot with animation
 		let statusDot = null
 		if (element === this.connectionStatus) {
 			statusDot = this.audioStatusDot
@@ -693,6 +738,11 @@ class LiveMusicGenerator {
 
 		if (statusDot) {
 			statusDot.className = `status-dot ${type}`
+			// Add visual feedback animation
+			statusDot.style.transform = 'scale(1.2)'
+			setTimeout(() => {
+				statusDot.style.transform = 'scale(1)'
+			}, 200)
 		}
 	}
 
@@ -737,6 +787,6 @@ class LiveMusicGenerator {
 
 // Initialize the application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-	console.log('Initializing Live Music Generator...')
+	console.log('Initializing Live Music Generator Pro...')
 	window.liveMusicGenerator = new LiveMusicGenerator()
 })

@@ -70,7 +70,7 @@ def set_stop_flag(value: bool):
     global stop_processing_flag
     stop_processing_flag = value
 
-async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
+async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaitable[None]], user_bpm: int, user_scale: str, user_genre: str):
     """Process video frames received from client and generate adaptive music"""
     global current_frame, frame_timestamp, no_frame_count
     
@@ -84,6 +84,7 @@ async def start_client_video_processing(broadcast_func: Callable[[bytes], Awaita
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
     prompt_generator = EnhancedMusicGenerator()
+    prompt_generator.set_user_settings(user_bpm, user_scale, user_genre)
     
     
     
@@ -638,6 +639,9 @@ class EnhancedMusicGenerator:
         self.scene_context_history = []
         self.motion_window = []
         self.brightness_history = []
+        self.user_bpm = None
+        self.user_scale = None
+        self.user_genre = None
         
         # Analysis aggregation for first 5 seconds
         self.initial_analysis_data = []
@@ -658,6 +662,12 @@ class EnhancedMusicGenerator:
         
         # Current dynamic prompts for monitoring
         self.current_dynamic_prompts = []
+
+    def set_user_settings(self, bpm: int, scale: str, genre: str):
+        self.user_bpm = int(bpm)
+        self.user_scale = str(scale)
+        self.user_genre = str(genre)
+        print(f"GENERATOR: User settings stored - BPM={self.user_bpm}, Scale={self.user_scale}, Genre={self.user_genre}")
     
     def reset_state(self):
     # """Reset generator state for restart"""
@@ -672,6 +682,9 @@ class EnhancedMusicGenerator:
         self.initial_analysis_data = []
         self.analysis_start_time = None
         self.current_dynamic_prompts = []
+        self.user_bpm = None
+        self.user_scale = None
+        self.user_genre = None
         logging.info("Music generator state reset")
 
     def initialize_ai_client(self):
@@ -800,13 +813,15 @@ class EnhancedMusicGenerator:
 
     async def generate_base_config_and_prompts(self, aggregated_data: Dict) -> Tuple[types.LiveMusicGenerationConfig, List[types.WeightedPrompt]]:
         """Generate initial configuration, base prompts, and dynamic prompt pools"""
+        logging.info(self.user_bpm,self.user_scale)
+    
         if not self.ai_client:
             self.initialize_ai_client()
             if not self.ai_client:
                 return self._fallback_base_config(aggregated_data), self._fallback_base_prompts(aggregated_data)
         
         ai_prompt = f"""
-you are electronic dance genre dj , Based on this comprehensive video scene analysis, generate a complete adaptive music system including:
+you are {self.user_genre} DJ , Based on this comprehensive video scene analysis, generate a complete adaptive music system including:
 1. Base music configuration
 2. Core foundational prompts (base prompts that stay constant)
 3. Dynamic prompt pools for live adaptation
@@ -834,8 +849,8 @@ IMPORTANT: Use ONLY these triggers that actually work in the video analysis syst
 Generate JSON in this exact format:
 {{
     "config": {{
-        "bpm": <60-200>,
-        "scale": E_MAJOR_D_FLAT_MINOR,
+        "bpm": {self.user_bpm}
+        "scale": {self.user_scale},
         "density": <0.0-1.0>,
         "brightness": <0.0-2.0>,
         "guidance": <1.0-6.0>
@@ -1293,13 +1308,14 @@ Guidelines:
         
         return prompts
 
-async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[None]]):
+async def live_camera_processing(broadcast_func: Callable[[bytes], Awaitable[None]], user_bpm: int, user_scale: str, user_genre: str):
     """Process live camera feed and generate adaptive music"""
     api_key = os.environ.get("LYRIA_API_KEY") or input("Enter API Key: ").strip()
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
     media_analyzer = MediaAnalyzer()
     prompt_generator = EnhancedMusicGenerator()
     prompt_generator.reset_state()
+    prompt_generator.set_user_settings(user_bpm, user_scale, user_genre)
     
     # Camera setup with timeout and retry
     cap = None
