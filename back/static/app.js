@@ -1,6 +1,5 @@
 class LiveMusicGenerator {
 	constructor() {
-		this.logWs = null
 		this.initializeElements()
 		this.initializeVariables()
 		this.setupEventListeners()
@@ -99,12 +98,11 @@ class LiveMusicGenerator {
 	}
 
 	async initializeApplication() {
-		this.connectLogWebSocket()
 		// Check for required APIs
 		if (!this.checkBrowserCompatibility()) {
 			return
 		}
-		this.connectLogWebSocket()
+
 		// Initialize audio context
 		this.initAudioContext()
 
@@ -142,44 +140,6 @@ class LiveMusicGenerator {
 		}
 
 		return true
-	}
-
-	connectLogWebSocket() {
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-		const host = window.location.host
-		this.logWs = new WebSocket(`${protocol}//${host}/ws/logs`)
-
-		this.logWs.onopen = () => {
-			console.log('Log WebSocket connected')
-		}
-
-		this.logWs.onmessage = (event) => {
-			try {
-				const data = JSON.parse(event.data)
-				if (data.type === 'log') {
-					this.appendLog(data.message)
-				}
-			} catch (e) {
-				this.appendLog(event.data)
-			}
-		}
-
-		this.logWs.onclose = () => {
-			console.log('Log WebSocket closed - reconnecting...')
-			setTimeout(() => this.connectLogWebSocket(), 3000)
-		}
-
-		this.logWs.onerror = (error) => {
-			console.error('Log WebSocket error:', error)
-		}
-	}
-
-	appendLog(message) {
-		const liveStatus = document.getElementById('liveStatus')
-		if (!liveStatus) return
-
-		const formattedMessage = `${message}`
-		liveStatus.textContent = formattedMessage
 	}
 
 	// Audio Context Management
@@ -775,10 +735,6 @@ class LiveMusicGenerator {
 
 		if (this.frameInterval) {
 			clearInterval(this.frameInterval)
-		}
-
-		if (this.logWs) {
-			this.logWs.close()
 		}
 
 		console.log('Application cleanup completed')

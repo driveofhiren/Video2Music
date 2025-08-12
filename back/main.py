@@ -1,4 +1,4 @@
-#main.py
+# main.py
 from fastapi import FastAPI, UploadFile, File, Request, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -19,8 +19,7 @@ import asyncio
 import threading
 import queue
 import time
-import builtins
-import sys
+import logging
 
 app = FastAPI()
 
@@ -42,38 +41,45 @@ active_connections: Dict[str, WebSocket] = {}
 video_connections: Dict[str, WebSocket] = {}
 music_processing_task = None
 log_connections: Dict[str, WebSocket] = {}
-log_queue = queue.Queue()
-original_print = builtins.print
 
-
-def safe_print(*args, **kwargs):
-    """Safe print that won't break audio processing"""
-    # Always call original print first
-    # original_print(*args, **kwargs)
+# Custom logging handler to send logs to WebSocket
+class WebSocketLogHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.log_queue = queue.Queue()
     
-    # Try to queue the message for WebSocket sending
-    try:
-        message = " ".join(str(arg) for arg in args)
-        if not log_queue.full():
-            log_queue.put_nowait(message)
-    except:
-        # If queueing fails, just continue
-        pass
-
-# Replace print function
-builtins.print = safe_print
-
-
-async def process_log_queue():
-    while True:
+    def emit(self, record):
         try:
-            if not log_queue.empty():
-                message = log_queue.get_nowait()
-                await broadcast_log(message)
+            msg = self.format(record)
+            if not self.log_queue.full():
+                self.log_queue.put_nowait(msg)
         except:
             pass
-        await asyncio.sleep(0.1)
+    
+    def get_messages(self):
+        messages = []
+        while not self.log_queue.empty():
+            try:
+                messages.append(self.log_queue.get_nowait())
+            except:
+                break
+        return messages
 
+# Create the WebSocket log handler
+websocket_handler = WebSocketLogHandler()
+websocket_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+async def process_log_queue():
+    """Process log queue and broadcast to WebSocket clients"""
+    while True:
+        try:
+            messages = websocket_handler.get_messages()
+            for message in messages:
+                await broadcast_log(message)
+        except Exception as e:
+            # Use basic print here to avoid recursion
+            print(f"Error in log queue processing: {e}")
+        await asyncio.sleep(0.1)
 
 @app.websocket("/ws/logs")
 async def websocket_logs(websocket: WebSocket):
@@ -85,10 +91,13 @@ async def websocket_logs(websocket: WebSocket):
         while True:
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                # if data == "ping":
-                #     await websocket.send_text("pong")
-            # except asyncio.TimeoutError:
-            #     await websocket.send_text("ping")
+                # Handle ping/pong if needed
+            except asyncio.TimeoutError:
+                # Send ping to keep connection alive
+                try:
+                    await websocket.send_text("ping")
+                except:
+                    break
             except WebSocketDisconnect:
                 break
     except:
@@ -97,16 +106,11 @@ async def websocket_logs(websocket: WebSocket):
         log_connections.pop(connection_id, None)
 
 async def broadcast_log(message: str):
-    """Safely broadcast log message"""
+    """Safely broadcast log message to all connected WebSocket clients"""
     if not log_connections:
         return
     
     try:
-        log_data = json.dumps({
-            "type": "log",
-            "message": message,
-        })
-        
         dead_connections = []
         for connection_id, websocket in log_connections.items():
             try:
@@ -118,17 +122,17 @@ async def broadcast_log(message: str):
         for conn_id in dead_connections:
             log_connections.pop(conn_id, None)
             
-    except:
-        pass  # Don't let logging break the app
-
+    except Exception as e:
+        # Use basic print to avoid recursion
+        print(f"Error broadcasting log: {e}")
 
 @app.on_event("startup")
 async def startup_event():
     # Start the log queue processor
     asyncio.create_task(process_log_queue())
+    print("Application started - WebSocket logging enabled")
 
 from final import start_client_video_processing, update_frame_from_client
-
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -138,15 +142,15 @@ async def home(request: Request):
 async def handle_start_live(request: Request):
     global music_processing_task, stop_processing_flag
     
-    # Get user settings from request body - MAKE SURE THESE ARE USED
+    # Get user settings from request body
     try:
         body = await request.json()
-        user_bpm = int(body.get('bpm', 120))  # Cast to int
-        user_scale = str(body.get('scale', 'C_MAJOR_A_MINOR'))  # Cast to str
+        user_bpm = int(body.get('bpm', 120))
+        user_scale = str(body.get('scale', 'C_MAJOR_A_MINOR'))
         user_genre = str(body.get('genre', 'Electronic')).strip()
-        # print(f"USER SELECTED: BPM={user_bpm}, Scale={user_scale}, Genre={user_genre}")
+        print(f"USER SELECTED: BPM={user_bpm}, Scale={user_scale}, Genre={user_genre}")
     except Exception as e:
-        print(f"Error parsing user settings: {e}")
+        logging.error(f"Error parsing user settings: {e}")
         user_bpm = 120
         user_scale = 'C_MAJOR_A_MINOR'
         user_genre = 'Electronic'
@@ -165,7 +169,8 @@ async def handle_start_live(request: Request):
     music_processing_task = asyncio.create_task(
         start_client_video_processing(broadcast_audio, user_bpm, user_scale, user_genre)
     )
-    return {"message": f"Live processing started with BPM: {user_bpm}, Scale: {user_scale},Genre: {user_genre}"}
+    print(f"Live processing started with BPM: {user_bpm}, Scale: {user_scale}, Genre: {user_genre}")
+    return {"message": f"Live processing started....."}
 
 @app.post("/stop-live")
 async def handle_stop_live():
@@ -185,6 +190,7 @@ async def handle_stop_live():
     music_processing_task = None
     stop_processing_flag = False
     
+    print("Live processing stopped")
     return {"message": "Live processing stopped"}
 
 @app.websocket("/ws/audio")
@@ -194,36 +200,32 @@ async def websocket_audio(websocket: WebSocket):
     active_connections[connection_id] = websocket
     try:
         while True:
-            # Try to receive a message to keep connection alive
             try:
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                # Handle ping/pong if needed
                 if data == "ping":
                     await websocket.send_text("pong")
             except asyncio.TimeoutError:
-                # Send ping to keep connection alive
                 try:
                     await websocket.send_text("ping")
                 except:
-                    break  # Connection is dead
+                    break
             except WebSocketDisconnect:
                 break
             except Exception as e:
-                print(f"WebSocket receive error: {e}")
+                logging.error(f"WebSocket receive error: {e}")
                 break
     except Exception as e:
-        print(f"WebSocket connection error: {e}")
+        logging.error(f"WebSocket connection error: {e}")
     finally:
         active_connections.pop(connection_id, None)
-        # print(f"Client {connection_id} disconnected")
-
+        print(f"Audio client {connection_id} disconnected")
 
 @app.websocket("/ws/video")
 async def websocket_video(websocket: WebSocket):
     await websocket.accept()
     connection_id = str(uuid.uuid4())
     video_connections[connection_id] = websocket
-    # print(f"Video client {connection_id} connected")
+    print(f"Video client {connection_id} connected")
     
     try:
         while True:
@@ -252,17 +254,17 @@ async def websocket_video(websocket: WebSocket):
             except WebSocketDisconnect:
                 break
             except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
+                logging.error(f"JSON decode error: {e}")
                 await websocket.send_text(json.dumps({"error": "Invalid JSON format"}))
             except Exception as e:
-                print(f"Video processing error: {e}")
+                logging.error(f"Video processing error: {e}")
                 await websocket.send_text(json.dumps({"error": str(e)}))
                 
     except Exception as e:
-        print(f"Video WebSocket error: {e}")
+        logging.error(f"Video WebSocket error: {e}")
     finally:
         video_connections.pop(connection_id, None)
-        # print(f"Video client {connection_id} disconnected")
+        print(f"Video client {connection_id} disconnected")
 
 async def broadcast_audio(audio_data: bytes):
     if not active_connections:
@@ -298,13 +300,12 @@ async def broadcast_audio(audio_data: bytes):
         try:
             await websocket.send_bytes(full_audio)
         except Exception as e:
-            print(f"Error broadcasting to {connection_id}: {e}")
+            logging.error(f"Error broadcasting to {connection_id}: {e}")
             try:
                 await websocket.close()
             except:
                 pass
             active_connections.pop(connection_id, None)
-
 
 @app.on_event("shutdown")
 async def shutdown_event():
