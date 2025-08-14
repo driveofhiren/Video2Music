@@ -40,6 +40,8 @@ build/
 uploads/
 cache/
 media2music/
+fresh_music_env/
+node_modules/
 
 # === Dotenv files ===
 .env
