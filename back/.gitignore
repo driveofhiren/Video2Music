@@ -35,6 +35,7 @@ build/
 *.wav
 *.mp3
 *.flac
+.json
 
 # === FastAPI Static & Uploads ===
 uploads/

@@ -20,8 +20,15 @@ import threading
 import queue
 import time
 import logging
+from fastapi import HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import WebSocket, WebSocketDisconnect, HTTPException
+from firebase_admin import auth, initialize_app, credentials
+import firebase_admin
+
 
 app = FastAPI()
+security = HTTPBearer()
 
 # Setup CORS
 app.add_middleware(
@@ -40,97 +47,24 @@ templates = Jinja2Templates(directory="static")
 active_connections: Dict[str, WebSocket] = {}
 video_connections: Dict[str, WebSocket] = {}
 music_processing_task = None
-log_connections: Dict[str, WebSocket] = {}
+
+cred = credentials.Certificate("./video2music-a5301-firebase-adminsdk-fbsvc-0aa5e544bb.json")
+firebase_admin.initialize_app(cred)
 
 # Custom logging handler to send logs to WebSocket
-class WebSocketLogHandler(logging.Handler):
-    def __init__(self):
-        super().__init__()
-        self.log_queue = queue.Queue()
-    
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            if not self.log_queue.full():
-                self.log_queue.put_nowait(msg)
-        except:
-            pass
-    
-    def get_messages(self):
-        messages = []
-        while not self.log_queue.empty():
-            try:
-                messages.append(self.log_queue.get_nowait())
-            except:
-                break
-        return messages
-
-# Create the WebSocket log handler
-websocket_handler = WebSocketLogHandler()
-websocket_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
-async def process_log_queue():
-    """Process log queue and broadcast to WebSocket clients"""
-    while True:
-        try:
-            messages = websocket_handler.get_messages()
-            for message in messages:
-                await broadcast_log(message)
-        except Exception as e:
-            # Use basic print here to avoid recursion
-            print(f"Error in log queue processing: {e}")
-        await asyncio.sleep(0.1)
-
-@app.websocket("/ws/logs")
-async def websocket_logs(websocket: WebSocket):
-    await websocket.accept()
-    connection_id = str(uuid.uuid4())
-    log_connections[connection_id] = websocket
-    
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
-        while True:
-            try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                # Handle ping/pong if needed
-            except asyncio.TimeoutError:
-                # Send ping to keep connection alive
-                try:
-                    await websocket.send_text("ping")
-                except:
-                    break
-            except WebSocketDisconnect:
-                break
-    except:
-        pass
-    finally:
-        log_connections.pop(connection_id, None)
-
-async def broadcast_log(message: str):
-    """Safely broadcast log message to all connected WebSocket clients"""
-    if not log_connections:
-        return
-    
-    try:
-        dead_connections = []
-        for connection_id, websocket in log_connections.items():
-            try:
-                await websocket.send_text(message)
-            except:
-                dead_connections.append(connection_id)
-        
-        # Clean up dead connections
-        for conn_id in dead_connections:
-            log_connections.pop(conn_id, None)
-            
+        token = credentials.credentials
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
     except Exception as e:
-        # Use basic print to avoid recursion
-        print(f"Error broadcasting log: {e}")
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+    
 
-@app.on_event("startup")
-async def startup_event():
-    # Start the log queue processor
-    asyncio.create_task(process_log_queue())
-    print("Application started - WebSocket logging enabled")
+
+@app.post("/verify-token")
+async def verify_token(current_user: dict = Depends(get_current_user)):
+    return {"status": "authenticated", "uid": current_user['uid']}
 
 from final import start_client_video_processing, update_frame_from_client
 
@@ -196,75 +130,101 @@ async def handle_stop_live():
 @app.websocket("/ws/audio")
 async def websocket_audio(websocket: WebSocket):
     await websocket.accept()
-    connection_id = str(uuid.uuid4())
-    active_connections[connection_id] = websocket
     try:
-        while True:
-            try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                if data == "ping":
-                    await websocket.send_text("pong")
-            except asyncio.TimeoutError:
+        data = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+        token = json.loads(data).get('token')
+        if not token:
+            await websocket.close(code=1008)
+            return
+        
+        # Verify token
+        decoded_token = auth.verify_id_token(token)
+        connection_id = str(uuid.uuid4())
+        active_connections[connection_id] = websocket
+        try:
+            while True:
                 try:
-                    await websocket.send_text("ping")
-                except:
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                    if data == "ping":
+                        await websocket.send_text("pong")
+                except asyncio.TimeoutError:
+                    try:
+                        await websocket.send_text("ping")
+                    except:
+                        break
+                except WebSocketDisconnect:
                     break
-            except WebSocketDisconnect:
-                break
-            except Exception as e:
-                logging.error(f"WebSocket receive error: {e}")
-                break
+                except Exception as e:
+                    logging.error(f"WebSocket receive error: {e}")
+                    break
+        except Exception as e:
+            logging.error(f"WebSocket connection error: {e}")
+        finally:
+            active_connections.pop(connection_id, None)
+            print(f"Audio client {connection_id} disconnected")
     except Exception as e:
-        logging.error(f"WebSocket connection error: {e}")
-    finally:
-        active_connections.pop(connection_id, None)
-        print(f"Audio client {connection_id} disconnected")
+        await websocket.close(code=1008)
+        return
 
 @app.websocket("/ws/video")
 async def websocket_video(websocket: WebSocket):
     await websocket.accept()
-    connection_id = str(uuid.uuid4())
-    video_connections[connection_id] = websocket
-    print(f"Video client {connection_id} connected")
-    
     try:
-        while True:
-            try:
-                # Receive frame data from client
-                data = await websocket.receive_text()
-                frame_data = json.loads(data)
-                
-                # Process the base64 encoded frame
-                if 'frame' in frame_data:
-                    # Extract base64 data (remove data:image/jpeg;base64, prefix)
-                    base64_data = frame_data['frame'].split(',')[1]
+        data = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+        token = json.loads(data).get('token')
+        if not token:
+            await websocket.close(code=1008)
+            return
+        
+        # Verify token
+        decoded_token = auth.verify_id_token(token)
+        connection_id = str(uuid.uuid4())
+        video_connections[connection_id] = websocket
+        connection_id = str(uuid.uuid4())
+        video_connections[connection_id] = websocket
+        print(f"Video client {connection_id} connected")
+        
+        try:
+            while True:
+                try:
+                    # Receive frame data from client
+                    data = await websocket.receive_text()
+                    frame_data = json.loads(data)
                     
-                    # Decode base64 to bytes
-                    image_bytes = base64.b64decode(base64_data)
+                    # Process the base64 encoded frame
+                    if 'frame' in frame_data:
+                        # Extract base64 data (remove data:image/jpeg;base64, prefix)
+                        base64_data = frame_data['frame'].split(',')[1]
+                        
+                        # Decode base64 to bytes
+                        image_bytes = base64.b64decode(base64_data)
+                        
+                        # Update the current frame for processing
+                        await update_frame_from_client(image_bytes)
+                        
+                        # Optional: Send acknowledgment back to client
+                        await websocket.send_text(json.dumps({
+                            "status": "frame_received",
+                            "timestamp": frame_data.get('timestamp', time.time())
+                        }))
                     
-                    # Update the current frame for processing
-                    await update_frame_from_client(image_bytes)
+                except WebSocketDisconnect:
+                    break
+                except json.JSONDecodeError as e:
+                    logging.error(f"JSON decode error: {e}")
+                    await websocket.send_text(json.dumps({"error": "Invalid JSON format"}))
+                except Exception as e:
+                    logging.error(f"Video processing error: {e}")
+                    await websocket.send_text(json.dumps({"error": str(e)}))
                     
-                    # Optional: Send acknowledgment back to client
-                    await websocket.send_text(json.dumps({
-                        "status": "frame_received",
-                        "timestamp": frame_data.get('timestamp', time.time())
-                    }))
-                
-            except WebSocketDisconnect:
-                break
-            except json.JSONDecodeError as e:
-                logging.error(f"JSON decode error: {e}")
-                await websocket.send_text(json.dumps({"error": "Invalid JSON format"}))
-            except Exception as e:
-                logging.error(f"Video processing error: {e}")
-                await websocket.send_text(json.dumps({"error": str(e)}))
-                
+        except Exception as e:
+            logging.error(f"Video WebSocket error: {e}")
+        finally:
+            video_connections.pop(connection_id, None)
+            print(f"Video client {connection_id} disconnected")
     except Exception as e:
-        logging.error(f"Video WebSocket error: {e}")
-    finally:
-        video_connections.pop(connection_id, None)
-        print(f"Video client {connection_id} disconnected")
+        await websocket.close(code=1008)
+        return    
 
 async def broadcast_audio(audio_data: bytes):
     if not active_connections:
