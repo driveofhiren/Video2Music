@@ -1,3 +1,22 @@
+// Get Firebase config from the backend (passed via template)
+const firebaseConfig = JSON.parse(
+	document.getElementById('firebase-config').textContent
+)
+// const firebaseConfig = {
+// 	apiKey: fb.apiKey,
+// 	authDomain: 'video2music-a5301.firebaseapp.com',
+// 	projectId: 'video2music-a5301',
+// 	storageBucket: 'video2music-a5301.appspot.com',
+// 	messagingSenderId: '230674835232',
+// 	appId: '1:230674835232:web:618e5593dec63ba908d945',
+// }
+
+firebase.initializeApp(firebaseConfig)
+const auth = firebase.auth()
+auth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch((error) => {
+	console.error('Error setting auth persistence:', error)
+})
+
 class LiveMusicGenerator {
 	constructor() {
 		this.initializeElements()
@@ -53,7 +72,70 @@ class LiveMusicGenerator {
 
 		// Configuration
 		this.sampleRate = 48000
-		this.frameRate = 10 // FPS for video streaming
+		this.frameRate = 5 // FPS for video streaming
+	}
+
+	setupAuthListener() {
+		// Exact same as your React code
+		const unsubscribe = auth.onAuthStateChanged((user) => {
+			console.log('Auth state changed:', user)
+			if (user) {
+				console.log('User signed in:', user.email)
+				document.body.classList.add('authenticated')
+				document.getElementById('authModal').style.display = 'none'
+
+				if (!this.checkBrowserCompatibility()) return
+				this.initAudioContext()
+				this.connectAudioWebSocket()
+			} else {
+				console.log('User signed out')
+				document.body.classList.remove('authenticated')
+				document.getElementById('authModal').style.display = 'flex'
+				this.cleanup() // This will stop all music generation and video
+			}
+		})
+
+		// Store unsubscribe
+		this.authUnsubscribe = unsubscribe
+
+		// Handle page refresh
+		window.addEventListener('unload', () => {
+			this.cleanup()
+			if (this.authUnsubscribe) {
+				this.authUnsubscribe()
+			}
+		})
+
+		// Use POPUP for everyone (like your React code)
+		const provider = new firebase.auth.GoogleAuthProvider()
+
+		document
+			.getElementById('googleSignInBtn')
+			.addEventListener('click', () => {
+				// Same as React: always use popup
+				auth.signInWithPopup(provider).catch((error) => {
+					console.error('Error during sign-in:', error)
+					alert('Authentication failed: ' + error.message)
+				})
+			})
+	}
+	async signOut() {
+		try {
+			await this.stopMusicGeneration()
+			// First sign out of Firebase
+			await auth.signOut()
+
+			// Then try to clear any Google Smart Lock credentials
+			if (window.PasswordCredential || window.FederatedCredential) {
+				try {
+					await navigator.credentials.preventSilentAccess()
+				} catch (e) {
+					console.log('Could not clear credentials:', e)
+				}
+			}
+		} catch (error) {
+			console.error('Sign out error:', error)
+		}
 	}
 
 	setupEventListeners() {
@@ -82,6 +164,9 @@ class LiveMusicGenerator {
 				this.stopKeepAlive()
 			}
 		})
+		document
+			.getElementById('signOutBtn')
+			.addEventListener('click', () => this.signOut())
 
 		// Cleanup on page unload
 		window.addEventListener('beforeunload', () => this.cleanup())
@@ -98,6 +183,7 @@ class LiveMusicGenerator {
 	}
 
 	async initializeApplication() {
+		this.setupAuthListener()
 		// Check for required APIs
 		if (!this.checkBrowserCompatibility()) {
 			return
@@ -154,16 +240,18 @@ class LiveMusicGenerator {
 				sampleRate: this.sampleRate,
 			})
 
+			// Create analyzer node
 			this.analyser = this.audioContext.createAnalyser()
-			this.analyser.fftSize = 512
+			this.analyser.fftSize = 256
+			this.analyser.smoothingTimeConstant = 0.8
 
-			const gainNode = this.audioContext.createGain()
-			gainNode.gain.value = 1.0
+			// Create gain node for volume control
+			this.gainNode = this.audioContext.createGain()
+			this.gainNode.gain.value = 1.0
 
-			this.analyser.connect(gainNode)
-			gainNode.connect(this.audioContext.destination)
-
-			this.setupVisualization()
+			// Connect nodes: analyser -> gain -> destination
+			this.analyser.connect(this.gainNode)
+			this.gainNode.connect(this.audioContext.destination)
 
 			console.log(
 				'Audio context initialized with sample rate:',
@@ -180,71 +268,71 @@ class LiveMusicGenerator {
 			return null
 		}
 	}
-
 	setupVisualization() {
+		// Clear any existing visualization
 		if (this.visualizationInterval) {
 			clearInterval(this.visualizationInterval)
 		}
 
+		// Create canvas for visualization
 		const canvas = document.createElement('canvas')
-		const rect = this.audioVisualizer.getBoundingClientRect()
-		canvas.width = rect.width * window.devicePixelRatio || rect.width
-		canvas.height = rect.height * window.devicePixelRatio || rect.height
-		canvas.style.width = rect.width + 'px'
-		canvas.style.height = rect.height + 'px'
-
 		this.audioVisualizer.innerHTML = ''
 		this.audioVisualizer.appendChild(canvas)
 
+		// Set canvas size
+		const width = this.audioVisualizer.clientWidth
+		const height = this.audioVisualizer.clientHeight
+		canvas.width = width
+		canvas.height = height
+
 		const ctx = canvas.getContext('2d')
-		ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1)
+		const bufferLength = this.analyser.frequencyBinCount
+		const dataArray = new Uint8Array(bufferLength)
 
-		// Enhanced gradient
-		const gradient = ctx.createLinearGradient(0, 0, 0, rect.height)
-		gradient.addColorStop(0, 'rgba(6, 182, 212, 0.8)')
-		gradient.addColorStop(0.3, 'rgba(99, 102, 241, 0.6)')
-		gradient.addColorStop(0.7, 'rgba(139, 92, 246, 0.4)')
-		gradient.addColorStop(1, 'rgba(6, 182, 212, 0.2)')
+		// Draw function
+		const draw = () => {
+			this.visualizationInterval = requestAnimationFrame(draw)
 
-		this.visualizationInterval = setInterval(() => {
 			if (!this.analyser) return
 
-			const bufferLength = this.analyser.frequencyBinCount
-			const dataArray = new Uint8Array(bufferLength)
+			// Get frequency data
 			this.analyser.getByteFrequencyData(dataArray)
+			console.log(
+				'Audio data range:',
+				Math.min(...dataArray),
+				Math.max(...dataArray)
+			)
 
-			// Clear with smooth fade
-			ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'
-			ctx.fillRect(0, 0, rect.width, rect.height)
+			// Clear canvas
+			ctx.fillStyle = 'rgb(0, 0, 0)'
+			ctx.fillRect(0, 0, width, height)
 
-			// Enhanced visualization
-			const barWidth = (rect.width / bufferLength) * 2.5
+			// Draw frequency bars
+			const barWidth = (width / bufferLength) * 2.5
 			let x = 0
 
 			for (let i = 0; i < bufferLength; i++) {
-				const barHeight = (dataArray[i] / 255) * rect.height * 0.9
+				const barHeight = (dataArray[i] / 255) * height
 
-				// Add glow effect
-				ctx.shadowColor = '#06b6d4'
-				ctx.shadowBlur = 10
-				ctx.fillStyle = gradient
-
-				// Rounded bars
-				ctx.beginPath()
-				ctx.roundRect(
-					x,
-					rect.height - barHeight,
-					barWidth - 2,
-					barHeight,
-					4
+				// Create gradient for each bar
+				const gradient = ctx.createLinearGradient(
+					0,
+					height - barHeight,
+					0,
+					height
 				)
-				ctx.fill()
+				gradient.addColorStop(0, 'rgba(6, 182, 212, 0.8)')
+				gradient.addColorStop(1, 'rgba(139, 92, 246, 0.4)')
+
+				ctx.fillStyle = gradient
+				ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight)
 
 				x += barWidth + 1
 			}
+		}
 
-			ctx.shadowBlur = 0
-		}, 30) // Smoother animation at ~33fps
+		// Start visualization
+		draw()
 	}
 
 	// Camera Management
@@ -308,13 +396,48 @@ class LiveMusicGenerator {
 
 	// WebSocket Management
 	connectVideoWebSocket() {
+		// Close existing connection if any
+		if (this.videoWs) {
+			try {
+				if (this.videoWs.readyState === WebSocket.OPEN) {
+					this.videoWs.close(1000, 'Reconnecting')
+				}
+			} catch (e) {
+				console.log('Error closing previous video connection:', e)
+			}
+		}
+
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
 		const host = window.location.host
 		this.videoWs = new WebSocket(`${protocol}//${host}/ws/video`)
 
-		this.videoWs.onopen = () => {
-			console.log('Video WebSocket connected')
-			this.startVideoStreaming()
+		this.videoWs.onopen = async () => {
+			try {
+				const token = await auth.currentUser.getIdToken()
+				this.videoWs.send(
+					JSON.stringify({
+						token,
+						clientInfo: {
+							resolution: `${this.captureCanvas.width}x${this.captureCanvas.height}`,
+							frameRate: this.frameRate,
+						},
+					})
+				)
+				console.log('Video WebSocket connected')
+				this.startVideoStreaming()
+			} catch (error) {
+				console.error('Failed to get token:', error)
+				this.updateStatus(
+					this.cameraStatus,
+					'Authentication failed',
+					'error'
+				)
+				try {
+					this.videoWs.close(1008, 'Auth failed')
+				} catch (e) {
+					console.log('Error closing failed connection:', e)
+				}
+			}
 		}
 
 		this.videoWs.onmessage = (event) => {
@@ -322,6 +445,17 @@ class LiveMusicGenerator {
 				const data = JSON.parse(event.data)
 				if (data.error) {
 					console.error('Server error:', data.error)
+					this.updateStatus(
+						this.cameraStatus,
+						`Server error: ${data.error}`,
+						'error'
+					)
+				} else if (data.status === 'processing') {
+					this.updateStatus(
+						this.cameraStatus,
+						'Processing video frames...',
+						'processing'
+					)
 				}
 			} catch (e) {
 				console.log('Non-JSON message:', event.data)
@@ -329,15 +463,32 @@ class LiveMusicGenerator {
 		}
 
 		this.videoWs.onclose = (event) => {
-			console.log('Video WebSocket closed:', event.code)
+			console.log(
+				`Video WebSocket closed: ${event.code} - ${event.reason}`
+			)
 			if (this.frameInterval) {
 				clearInterval(this.frameInterval)
 				this.frameInterval = null
+			}
+
+			// Only attempt reconnect if closure was unexpected
+			if (event.code !== 1000 && event.code !== 1001) {
+				this.updateStatus(
+					this.cameraStatus,
+					'Video connection lost - reconnecting...',
+					'error'
+				)
+				setTimeout(() => this.connectVideoWebSocket(), 2000)
 			}
 		}
 
 		this.videoWs.onerror = (error) => {
 			console.error('Video WebSocket error:', error)
+			this.updateStatus(
+				this.cameraStatus,
+				'Video connection error',
+				'error'
+			)
 		}
 	}
 
@@ -384,9 +535,12 @@ class LiveMusicGenerator {
 	}
 
 	connectAudioWebSocket() {
+		// Close existing connection if any
 		if (this.audioWs) {
 			try {
-				this.audioWs.close()
+				if (this.audioWs.readyState === WebSocket.OPEN) {
+					this.audioWs.close(1000, 'Reconnecting')
+				}
 			} catch (e) {
 				console.log('Error closing previous audio connection:', e)
 			}
@@ -404,33 +558,89 @@ class LiveMusicGenerator {
 
 		this.audioWs.binaryType = 'arraybuffer'
 
-		this.audioWs.onopen = () => {
-			this.reconnectAttempts = 0
-			this.updateStatus(
-				this.connectionStatus,
-				'Audio stream connected',
-				'connected'
-			)
-			this.initAudioContext()
-			this.startKeepAlive()
-			console.log('Audio WebSocket connection established')
+		this.audioWs.onopen = async () => {
+			try {
+				const token = await auth.currentUser.getIdToken()
+				this.audioWs.send(
+					JSON.stringify({
+						token,
+						clientInfo: {
+							sampleRate: this.sampleRate,
+							format: 'wav',
+						},
+					})
+				)
+				console.log('Audio WebSocket connected')
+				this.updateStatus(
+					this.connectionStatus,
+					'Audio connected - waiting for stream...',
+					'connected'
+				)
+				this.startKeepAlive()
+			} catch (error) {
+				console.error('Failed to get token:', error)
+				this.updateStatus(
+					this.connectionStatus,
+					'Authentication failed',
+					'error'
+				)
+				try {
+					this.audioWs.close(1008, 'Auth failed')
+				} catch (e) {
+					console.log('Error closing failed connection:', e)
+				}
+			}
 		}
 
 		this.audioWs.onmessage = async (event) => {
 			if (event.data instanceof ArrayBuffer) {
-				await this.processAudioData(event.data)
+				try {
+					await this.processAudioData(event.data)
+				} catch (e) {
+					console.error('Error processing audio data:', e)
+				}
 			} else if (typeof event.data === 'string') {
-				if (event.data === 'pong') {
-					console.log('Audio keepalive received')
-				} else {
-					console.log('Server message:', event.data)
+				try {
+					const data = JSON.parse(event.data)
+					if (data.error) {
+						console.error('Server error:', data.error)
+						this.updateStatus(
+							this.connectionStatus,
+							`Server error: ${data.error}`,
+							'error'
+						)
+					} else if (data.status === 'streaming') {
+						this.updateStatus(
+							this.connectionStatus,
+							'Streaming live music...',
+							'connected'
+						)
+					} else if (data === 'pong') {
+						// Keepalive response
+						console.debug('Audio keepalive received')
+					}
+				} catch (e) {
+					console.log('Non-JSON text message:', event.data)
 				}
 			}
 		}
 
 		this.audioWs.onclose = (event) => {
+			console.log(
+				`Audio WebSocket closed: ${event.code} - ${event.reason}`
+			)
 			this.stopKeepAlive()
-			this.handleAudioDisconnection(event)
+
+			// Only attempt reconnect if closure was unexpected
+			if (event.code !== 1000 && event.code !== 1001) {
+				this.handleAudioDisconnection(event)
+			} else {
+				this.updateStatus(
+					this.connectionStatus,
+					'Audio connection closed',
+					'processing'
+				)
+			}
 		}
 
 		this.audioWs.onerror = (error) => {
@@ -442,7 +652,6 @@ class LiveMusicGenerator {
 			)
 		}
 	}
-
 	async processAudioData(arrayBuffer) {
 		try {
 			const audioContext = this.initAudioContext()
@@ -532,8 +741,15 @@ class LiveMusicGenerator {
 		// Create new source
 		this.audioSource = this.audioContext.createBufferSource()
 		this.audioSource.buffer = audioData
+
+		// Connect source to analyzer and then to destination
 		this.audioSource.connect(this.analyser)
+		this.audioSource.connect(this.gainNode)
+
 		this.audioSource.start()
+
+		// Setup visualization when audio starts
+		this.setupVisualization()
 
 		// Visual feedback
 		this.updateStatus(
@@ -593,6 +809,29 @@ class LiveMusicGenerator {
 
 	// Music Generation Control
 	async startLiveProcessing() {
+		// Verify authentication first
+		try {
+			const token = await auth.currentUser.getIdToken()
+			const response = await fetch('/verify-token', {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			})
+
+			if (!response.ok) {
+				throw new Error('Authentication failed')
+			}
+		} catch (error) {
+			console.error('Authentication check failed:', error)
+			this.updateStatus(
+				this.liveStatus,
+				'Authentication failed - please sign in again',
+				'error'
+			)
+			this.liveBtn.disabled = false
+			return
+		}
 		this.liveBtn.disabled = true
 		this.updateStatus(
 			this.liveStatus,
@@ -669,9 +908,24 @@ class LiveMusicGenerator {
 			this.frameInterval = null
 		}
 
+		// Stop media stream if it exists
+		if (this.mediaStream) {
+			this.mediaStream.getTracks().forEach((track) => track.stop())
+			this.mediaStream = null
+		}
+
+		// Reset video elements
+		if (this.videoPreview) {
+			this.videoPreview.srcObject = null
+		}
+		if (this.videoPlaceholder) {
+			this.videoPlaceholder.style.display = 'block'
+		}
+
 		// Reset UI
-		this.liveBtn.disabled = false
-		this.stopMusicBtn.disabled = true
+		if (this.liveBtn) this.liveBtn.disabled = false
+		if (this.stopMusicBtn) this.stopMusicBtn.disabled = true
+		if (this.startCameraBtn) this.startCameraBtn.disabled = false
 
 		this.updateStatus(
 			this.liveStatus,
@@ -707,6 +961,9 @@ class LiveMusicGenerator {
 	}
 
 	cleanup() {
+		this.stopMusicGeneration()
+
+		if (!auth.currentUser) return
 		this.stopKeepAlive()
 
 		// Close WebSocket connections

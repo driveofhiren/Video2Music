@@ -2,165 +2,329 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+		/>
 		<title>Live Music Generator</title>
+		<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+		<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+		<script id="firebase-config" type="application/json">
+			{{ firebase_config|safe }}
+		</script>
 		<link rel="stylesheet" href="static/style.css" />
 		<script src="static/app.js" defer></script>
 	</head>
 	<body>
-		<body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header floating">
-            <h1>Live Music Generator Pro</h1>
-            <p class="subtitle">
-                Transform your camera feed into beautiful, AI-generated music in real-time
-            </p>
-        </header>
+		<!-- Auth Modal -->
+		<div id="authModal" class="auth-modal">
+			<div class="auth-container">
+				<div class="auth-header">
+					<h2>Welcome to Live Music Generator</h2>
+					<p>Please sign in to continue</p>
+				</div>
+				<div class="auth-content">
+					<button id="googleSignInBtn" class="btn btn-google">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+						>
+							<path
+								d="M12.545 10.239v3.821h5.445c-0.712 2.315-2.647 3.972-5.445 3.972-3.332 0-6.033-2.701-6.033-6.032s2.701-6.032 6.033-6.032c1.498 0 2.866 0.549 3.921 1.453l2.814-2.814c-1.784-1.664-4.143-2.676-6.735-2.676-5.522 0-10 4.477-10 10s4.478 10 10 10c8.396 0 10-7.524 10-10 0-0.67-0.069-1.325-0.189-1.955h-9.811z"
+							/>
+						</svg>
+						Sign in with Google
+					</button>
+				</div>
+			</div>
+		</div>
+		<div class="container">
+			<!-- Header -->
+			<header class="header floating">
+				<h1>Live Music Generator Pro</h1>
+				<p class="subtitle">
+					Transform your camera feed into beautiful, AI-generated
+					music in real-time
+				</p>
+				<button id="signOutBtn" class="btn btn-warning">
+					<svg
+						width="20"
+						height="20"
+						viewBox="0 0 24 24"
+						fill="currentColor"
+					>
+						<path
+							d="M16 17v-3H9v-4h7V7l5 5-5 5zM14 2a2 2 0 0 1 2 2v2h-2V4H5v16h9v-2h2v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9z"
+						/>
+					</svg>
+					Sign Out
+				</button>
+			</header>
 
-        <!-- Control Panel -->
-        <div class="control-panel glow-on-hover">
-            <div class="control-header">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="color: var(--primary)">
-                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                </svg>
-                <h2>Music Controls</h2>
-            </div>
+			<!-- Control Panel -->
+			<div class="control-panel glow-on-hover">
+				<div class="control-header">
+					<svg
+						width="24"
+						height="24"
+						viewBox="0 0 24 24"
+						fill="currentColor"
+						style="color: var(--primary)"
+					>
+						<path
+							d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"
+						/>
+					</svg>
+					<h2>Music Controls</h2>
+				</div>
 
-            <div class="controls-grid">
-                <div class="control-item">
-                    <div class="control-label">
-                        <span>Tempo (BPM)</span>
-                        <div class="bpm-display">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                            </svg>
-                            <span id="bpmValue">120</span>
-                        </div>
-                    </div>
-                    <input type="range" id="bpmSlider" min="60" max="200" value="120" class="slider">
-                </div>
+				<div class="controls-grid">
+					<div class="control-item">
+						<div class="control-label">
+							<span>Tempo (BPM)</span>
+							<div class="bpm-display">
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="currentColor"
+								>
+									<path
+										d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+									/>
+								</svg>
+								<span id="bpmValue">120</span>
+							</div>
+						</div>
+						<input
+							type="range"
+							id="bpmSlider"
+							min="60"
+							max="200"
+							value="120"
+							class="slider"
+						/>
+					</div>
 
-                <div class="control-item">
-                    <div class="control-label">
-                        <span>Musical Scale</span>
-                    </div>
-                    <select id="scaleSelect" class="select">
-                        <option value="C_MAJOR_A_MINOR">C Major / A Minor</option>
-                        <option value="D_FLAT_MAJOR_B_FLAT_MINOR">D♭ Major / B♭ Minor</option>
-                        <option value="D_MAJOR_B_MINOR">D Major / B Minor</option>
-                        <option value="E_FLAT_MAJOR_C_MINOR">E♭ Major / C Minor</option>
-                        <option value="E_MAJOR_D_FLAT_MINOR">E Major / D♭ Minor</option>
-                        <option value="F_MAJOR_D_MINOR">F Major / D Minor</option>
-                        <option value="G_FLAT_MAJOR_E_FLAT_MINOR">G♭ Major / E♭ Minor</option>
-                        <option value="G_MAJOR_E_MINOR">G Major / E Minor</option>
-                        <option value="A_FLAT_MAJOR_F_MINOR">A♭ Major / F Minor</option>
-                        <option value="A_MAJOR_G_FLAT_MINOR">A Major / G♭ Minor</option>
-                        <option value="B_FLAT_MAJOR_G_MINOR">B♭ Major / G Minor</option>
-                        <option value="B_MAJOR_A_FLAT_MINOR">B Major / A♭ Minor</option>
-                    </select>
-                </div>
+					<div class="control-item">
+						<div class="control-label">
+							<span>Musical Scale</span>
+						</div>
+						<select id="scaleSelect" class="select">
+							<option value="C_MAJOR_A_MINOR">
+								C Major / A Minor
+							</option>
+							<option value="D_FLAT_MAJOR_B_FLAT_MINOR">
+								D♭ Major / B♭ Minor
+							</option>
+							<option value="D_MAJOR_B_MINOR">
+								D Major / B Minor
+							</option>
+							<option value="E_FLAT_MAJOR_C_MINOR">
+								E♭ Major / C Minor
+							</option>
+							<option value="E_MAJOR_D_FLAT_MINOR">
+								E Major / D♭ Minor
+							</option>
+							<option value="F_MAJOR_D_MINOR">
+								F Major / D Minor
+							</option>
+							<option value="G_FLAT_MAJOR_E_FLAT_MINOR">
+								G♭ Major / E♭ Minor
+							</option>
+							<option value="G_MAJOR_E_MINOR">
+								G Major / E Minor
+							</option>
+							<option value="A_FLAT_MAJOR_F_MINOR">
+								A♭ Major / F Minor
+							</option>
+							<option value="A_MAJOR_G_FLAT_MINOR">
+								A Major / G♭ Minor
+							</option>
+							<option value="B_FLAT_MAJOR_G_MINOR">
+								B♭ Major / G Minor
+							</option>
+							<option value="B_MAJOR_A_FLAT_MINOR">
+								B Major / A♭ Minor
+							</option>
+						</select>
+					</div>
 
-                <div class="control-item">
-                    <div class="control-label">
-                        <span>Genre Style</span>
-                    </div>
-                    <input type="text" id="genreInput" placeholder="Electronic, Jazz, Ambient, Rock..." class="input" value="Electronic">
-                </div>
-            </div>
+					<div class="control-item">
+						<div class="control-label">
+							<span>Genre Style</span>
+						</div>
+						<input
+							type="text"
+							id="genreInput"
+							placeholder="Electronic, Jazz, Ambient, Rock..."
+							class="input"
+							value="Electronic"
+						/>
+					</div>
+				</div>
 
-            <div class="action-buttons">
-                <button id="startCameraBtn" class="btn btn-primary">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"/>
-                    </svg>
-                    Initialize Camera
-                </button>
+				<div class="action-buttons">
+					<button id="startCameraBtn" class="btn btn-primary">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+						>
+							<path
+								d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"
+							/>
+						</svg>
+						Initialize Camera
+					</button>
 
-                <button id="liveBtn" class="btn btn-success" disabled>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M8 5v14l11-7z"/>
-                    </svg>
-                    Generate Music
-                </button>
+					<button id="liveBtn" class="btn btn-success" disabled>
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+						>
+							<path d="M8 5v14l11-7z" />
+						</svg>
+						Generate Music
+					</button>
 
-                <button id="stopMusicBtn" class="btn btn-danger" disabled>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <rect x="6" y="6" width="12" height="12"/>
-                    </svg>
-                    Stop Generation
-                </button>
-            </div>
-        </div>
+					<button id="stopMusicBtn" class="btn btn-danger" disabled>
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="currentColor"
+						>
+							<rect x="6" y="6" width="12" height="12" />
+						</svg>
+						Stop Generation
+					</button>
+				</div>
+			</div>
 
-        <!-- Media Grid -->
-        <div class="media-grid">
-            <!-- Camera Feed -->
-            <div class="media-card glow-on-hover">
-                <div class="card-header">
-                    <div class="card-title">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="color: var(--primary)">
-                            <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"/>
-                        </svg>
-                        Camera Feed
-                    </div>
-                    <div class="status-indicator">
-                        <div class="status-dot" id="cameraStatusDot"></div>
-                        <span id="cameraStatus">Camera not started</span>
-                    </div>
-                </div>
+			<!-- Media Grid -->
+			<div class="media-grid">
+				<!-- Camera Feed -->
+				<div class="media-card glow-on-hover">
+					<div class="card-header">
+						<div class="card-title">
+							<svg
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+								fill="currentColor"
+								style="color: var(--primary)"
+							>
+								<path
+									d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"
+								/>
+							</svg>
+							Camera Feed
+						</div>
+						<div class="status-indicator">
+							<div class="status-dot" id="cameraStatusDot"></div>
+							<span id="cameraStatus">Camera not started</span>
+						</div>
+					</div>
 
-                <div class="video-content">
-                    <div class="video-preview">
-                        <video id="videoPreview" autoplay muted playsinline></video>
-                        <div id="videoPlaceholder" class="video-placeholder">
-                            <div class="placeholder-content">
-                                <svg class="placeholder-icon" viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"/>
-                                </svg>
-                                <p>Click "Initialize Camera" to begin visual music generation</p>
-                            </div>
-                        </div>
-                        <canvas id="captureCanvas"></canvas>
-                    </div>
+					<div class="video-content">
+						<div class="video-preview">
+							<video
+								id="videoPreview"
+								autoplay
+								muted
+								playsinline
+							></video>
+							<div
+								id="videoPlaceholder"
+								class="video-placeholder"
+							>
+								<div class="placeholder-content">
+									<svg
+										class="placeholder-icon"
+										viewBox="0 0 24 24"
+										fill="currentColor"
+									>
+										<path
+											d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4V6.5l-4 4Z"
+										/>
+									</svg>
+									<p>
+										Click "Initialize Camera" to begin
+										visual music generation
+									</p>
+								</div>
+							</div>
+							<canvas id="captureCanvas"></canvas>
+						</div>
 
-                    <div class="status-display">
-                        <div class="status-indicator">
-                            <div class="status-dot" id="musicStatusDot"></div>
-                            <div id="liveStatus">Ready to generate music from visual input</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+						<div class="status-display">
+							<div class="status-indicator">
+								<div
+									class="status-dot"
+									id="musicStatusDot"
+								></div>
+								<div id="liveStatus">
+									Ready to generate music from visual input
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
 
-            <!-- Audio Output -->
-            <div class="media-card glow-on-hover">
-                <div class="card-header">
-                    <div class="card-title">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="color: var(--accent)">
-                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-                        </svg>
-                        Audio Output
-                    </div>
-                    <div class="status-indicator">
-                        <div class="status-dot" id="audioStatusDot"></div>
-                        <span id="connectionStatus">Connecting to audio stream...</span>
-                    </div>
-                </div>
+				<!-- Audio Output -->
+				<div class="media-card glow-on-hover">
+					<div class="card-header">
+						<div class="card-title">
+							<svg
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+								fill="currentColor"
+								style="color: var(--accent)"
+							>
+								<path
+									d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
+								/>
+							</svg>
+							Audio Output
+						</div>
+						<div class="status-indicator">
+							<div class="status-dot" id="audioStatusDot"></div>
+							<span id="connectionStatus"
+								>Connecting to audio stream...</span
+							>
+						</div>
+					</div>
 
-                <div class="audio-content">
-                    <div id="audioVisualizer" class="audio-visualizer"></div>
-                    <audio id="audioPlayer" controls></audio>
-                </div>
-            </div>
-        </div>
+					<div class="audio-content">
+						<div
+							id="audioVisualizer"
+							class="audio-visualizer"
+						></div>
+						<audio id="audioPlayer" controls></audio>
+					</div>
+				</div>
+			</div>
 
-        <!-- Footer -->
-        <footer class="app-footer">
-            <p style="color: var(--text-secondary); text-align: center; padding: 2rem;">
-                Professional AI Music Generation • Real-time Visual Processing
-            </p>
-        </footer>
-    </div>
+			<!-- Footer -->
+			<footer class="app-footer">
+				<p
+					style="
+						color: var(--text-secondary);
+						text-align: center;
+						padding: 2rem;
+					"
+				>
+					Professional AI Music Generation • Real-time Visual
+					Processing
+				</p>
+			</footer>
+		</div>
 	</body>
 </html>
