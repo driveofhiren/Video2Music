@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 import os
+from dotenv import load_dotenv
 import uuid
 import asyncio
 from pathlib import Path
@@ -29,6 +30,7 @@ import firebase_admin
 
 app = FastAPI()
 security = HTTPBearer()
+load_dotenv()
 
 # Setup CORS
 app.add_middleware(
@@ -48,10 +50,24 @@ active_connections: Dict[str, WebSocket] = {}
 video_connections: Dict[str, WebSocket] = {}
 music_processing_task = None
 
-cred = credentials.Certificate("./video2music-a5301-firebase-adminsdk-fbsvc-0aa5e544bb.json")
+# Replace the credential loading with:
+firebase_config = {
+    "type": "service_account",
+    "project_id": os.getenv('FIREBASE_PROJECT_ID'),
+    "private_key_id": os.getenv('FIREBASE_PRIVATE_KEY_ID'),
+    "private_key": os.getenv('FIREBASE_PRIVATE_KEY'),
+    "client_email": os.getenv('FIREBASE_CLIENT_EMAIL'),
+    "client_id": os.getenv('FIREBASE_CLIENT_ID'),
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": os.getenv('FIREBASE_CLIENT_CERT_URL')
+}
+
+cred = credentials.Certificate(firebase_config)
 firebase_admin.initialize_app(cred)
 
-# Custom logging handler to send logs to WebSocket
+# Custom logging handler to send logs to WebSocke
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         token = credentials.credentials
@@ -70,7 +86,17 @@ from final import start_client_video_processing, update_frame_from_client
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    firebase_config = {
+        'apiKey': os.getenv('FIREBASE_API_KEY'),
+        'authDomain': os.getenv('FIREBASE_AUTH_DOMAIN'),
+        'projectId': os.getenv('FIREBASE_PROJECT_ID'),
+        'storageBucket': os.getenv('FIREBASE_STORAGE_BUCKET'),
+        'messagingSenderId': os.getenv('FIREBASE_MESSAGING_SENDER_ID'),
+        'appId': os.getenv('FIREBASE_APP_ID')
+    }
+    return templates.TemplateResponse("index.html", {"request": request, "firebase_config":json.dumps(firebase_config)})
+
+
 
 @app.post("/start-live")
 async def handle_start_live(request: Request):

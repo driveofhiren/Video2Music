@@ -1,11 +1,15 @@
-const firebaseConfig = {
-	apiKey: 'AIzaSyBXZXun7gQCNsZISmhnJBXQtOzi2nG9DiA',
-	authDomain: 'video2music-a5301.firebaseapp.com',
-	projectId: 'video2music-a5301',
-	storageBucket: 'video2music-a5301.appspot.com',
-	messagingSenderId: '230674835232',
-	appId: '1:230674835232:web:618e5593dec63ba908d945',
-}
+// Get Firebase config from the backend (passed via template)
+const firebaseConfig = JSON.parse(
+	document.getElementById('firebase-config').textContent
+)
+// const firebaseConfig = {
+// 	apiKey: fb.apiKey,
+// 	authDomain: 'video2music-a5301.firebaseapp.com',
+// 	projectId: 'video2music-a5301',
+// 	storageBucket: 'video2music-a5301.appspot.com',
+// 	messagingSenderId: '230674835232',
+// 	appId: '1:230674835232:web:618e5593dec63ba908d945',
+// }
 
 firebase.initializeApp(firebaseConfig)
 const auth = firebase.auth()
@@ -70,52 +74,54 @@ class LiveMusicGenerator {
 		this.sampleRate = 48000
 		this.frameRate = 5 // FPS for video streaming
 	}
+
 	setupAuthListener() {
-		auth.onAuthStateChanged((user) => {
+		// Exact same as your React code
+		const unsubscribe = auth.onAuthStateChanged((user) => {
+			console.log('Auth state changed:', user)
 			if (user) {
-				// User is signed in
+				console.log('User signed in:', user.email)
 				document.body.classList.add('authenticated')
 				document.getElementById('authModal').style.display = 'none'
-				console.log('User signed in:', user.email)
 
-				// Initialize the rest of the app
-				if (!this.checkBrowserCompatibility()) {
-					return
-				}
+				if (!this.checkBrowserCompatibility()) return
 				this.initAudioContext()
 				this.connectAudioWebSocket()
 			} else {
-				// User is signed out
+				console.log('User signed out')
 				document.body.classList.remove('authenticated')
 				document.getElementById('authModal').style.display = 'flex'
-				console.log('User signed out')
-
-				// Clean up any existing connections
-				this.cleanup()
+				this.cleanup() // This will stop all music generation and video
 			}
 		})
 
-		// Setup Google sign-in button
+		// Store unsubscribe
+		this.authUnsubscribe = unsubscribe
+
+		// Handle page refresh
+		window.addEventListener('unload', () => {
+			this.cleanup()
+			if (this.authUnsubscribe) {
+				this.authUnsubscribe()
+			}
+		})
+
+		// Use POPUP for everyone (like your React code)
+		const provider = new firebase.auth.GoogleAuthProvider()
+
 		document
 			.getElementById('googleSignInBtn')
 			.addEventListener('click', () => {
-				const provider = new firebase.auth.GoogleAuthProvider()
-
-				// Add these configuration options:
-				provider.setCustomParameters({
-					prompt: 'select_account', // Always show account picker
-					login_hint: '', // Clear any cached hints
-				})
-
+				// Same as React: always use popup
 				auth.signInWithPopup(provider).catch((error) => {
-					console.error('Authentication error:', error)
+					console.error('Error during sign-in:', error)
 					alert('Authentication failed: ' + error.message)
 				})
 			})
 	}
-
 	async signOut() {
 		try {
+			await this.stopMusicGeneration()
 			// First sign out of Firebase
 			await auth.signOut()
 
@@ -902,9 +908,24 @@ class LiveMusicGenerator {
 			this.frameInterval = null
 		}
 
+		// Stop media stream if it exists
+		if (this.mediaStream) {
+			this.mediaStream.getTracks().forEach((track) => track.stop())
+			this.mediaStream = null
+		}
+
+		// Reset video elements
+		if (this.videoPreview) {
+			this.videoPreview.srcObject = null
+		}
+		if (this.videoPlaceholder) {
+			this.videoPlaceholder.style.display = 'block'
+		}
+
 		// Reset UI
-		this.liveBtn.disabled = false
-		this.stopMusicBtn.disabled = true
+		if (this.liveBtn) this.liveBtn.disabled = false
+		if (this.stopMusicBtn) this.stopMusicBtn.disabled = true
+		if (this.startCameraBtn) this.startCameraBtn.disabled = false
 
 		this.updateStatus(
 			this.liveStatus,
@@ -940,6 +961,8 @@ class LiveMusicGenerator {
 	}
 
 	cleanup() {
+		this.stopMusicGeneration()
+
 		if (!auth.currentUser) return
 		this.stopKeepAlive()
 

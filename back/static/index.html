@@ -2,10 +2,16 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+		/>
 		<title>Live Music Generator</title>
 		<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 		<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+		<script id="firebase-config" type="application/json">
+			{{ firebase_config|safe }}
+		</script>
 		<link rel="stylesheet" href="static/style.css" />
 		<script src="static/app.js" defer></script>
 	</head>
